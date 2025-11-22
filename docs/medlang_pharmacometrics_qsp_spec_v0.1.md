@@ -328,7 +328,7 @@ The following sections are to be filled in subsequent iterations:
     - Bayesian mode (posterior inference).
   - Required interfaces for inference engines (log–likelihood, log–prior, gradients).
 
-- **8. Hybrid Mechanistic–ML and PINN Integration**
+- **8. Hybrid Mechanistic–ML and PINN Integration** ✓ (See below)
   - Syntax and semantics for embedding learned components (`Model<X,Y>`) into Track D models.
   - Constraints for safe integration (type and unit consistency, monotonicity where needed).
   - Hooks for physics–informed training (PINN‑style losses).
@@ -1669,6 +1669,447 @@ This abstraction allows:
 - and future extensions (e.g. PINN‑based inference, differentiable programming) without changing model semantics.
 
 Subsequent sections (§8–§10) will address hybrid mechanistic–ML integration, worked examples, and explicit IR mappings that make these contracts concrete in an implementation.
+
+---
+
+## 8. Hybrid Mechanistic–ML and PINN Integration
+
+Track D explicitly supports **hybrid models** that combine:
+
+- mechanistic structure (PK/PD/QSP ODE/PDE systems), and
+- data–driven components (classical ML, neural networks, Gaussian Processes, PINNs),
+
+while preserving:
+
+- **type and unit safety** (Section 4),
+- **probabilistic semantics** (Section 6),
+- and compatibility with all inference modes (Section 7).
+
+This section specifies how ML components may be integrated into Track D models, which patterns are allowed, and which constraints must be enforced to maintain interpretability and identifiability.
+
+### 8.1 Objectives and Use–Cases
+
+Hybrid mechanistic–ML is motivated by several recurring needs:
+
+1. **Parameter prediction from high–dimensional features**
+   - Predict partition coefficients (Kp), tissue permeabilities, clearance (CL), or bioavailability (F) from:
+     - molecular descriptors,
+     - omics profiles,
+     - imaging or biomarker panels.
+   - Example: a GNN or transformer predicting tissue Kp from chemical structure.
+
+2. **Unknown or partially known dynamics**
+   - Mechanistic structure is known only partially; certain reaction terms or feedback functions are unknown or too complex.
+   - Example: immune–tumour interactions where the form of the killing function is uncertain.
+
+3. **Emulation of expensive submodels**
+   - Replace an expensive submodel (e.g. detailed cellular model or spatial PDE) by a learned surrogate (NN or GP) trained on its outputs.
+
+4. **Physics–informed learning (PINNs / universal DEs)**
+   - Use differential equation structure as a **soft constraint** during training, combining:
+     - data misfit,
+     - ODE/PDE residual penalties.
+
+Track D must support these patterns without compromising the clarity of the **mechanistic backbone** or the probabilistic semantics.
+
+---
+
+### 8.2 ML Submodels as Deterministic Components
+
+At the language level, an ML component is treated as a **deterministic function**:
+
+```
+f_ML(x; w): 𝒳 → 𝒴
+```
+
+where:
+- x is an input vector (covariates, states, time, features),
+- w is a vector (or structured object) of parameters/weights.
+
+In MedLang, we treat f_ML as a specialized `Model` or function with:
+
+- **well–typed inputs and outputs** (with units),
+- parameters w that are part of the overall parameter vector and can be:
+  - fixed (pre–trained),
+  - fitted (frequentist),
+  - assigned priors (Bayesian).
+
+Conceptual pseudo–signature:
+
+```medlang
+model MLSubmodel {
+    param w : MLParamVector      // NN weights, GP hyperparameters, etc.
+
+    fn forward(x : InputType) : OutputType {
+        // ML computation graph (opaque at this level)
+    }
+}
+```
+
+The core `Model` may then call `MLSubmodel.forward` inside either:
+- **parameterization code**, or
+- **dynamics right–hand side**.
+
+---
+
+### 8.3 Parameter–Level Hybrids (Mechanistic Structure, ML Parameters)
+
+The simplest and most interpretable hybrid pattern is:
+
+> **Mechanistic structure is fixed; some parameters are predicted by ML from features.**
+
+Example: CL, V, Kp predicted from covariates or molecular features.
+
+#### 8.3.1 Example: ML–predicted clearance
+
+Let xᵢ be a feature vector (covariates, molecular descriptors) for individual or compound i. Let an ML model predict a **dimensionless multiplier** g_ML(xᵢ; w), applied to a baseline clearance:
+
+```
+CLᵢ = CL_base · g_ML(xᵢ; w)
+```
+
+where:
+- CL_base has unit `Volume/Time`,
+- g_ML is constrained to be positive dimensionless (e.g. via `softplus`).
+
+Pseudo–MedLang:
+
+```medlang
+model CL_MLSubmodel {
+    param w : MLParamVector   // NN weights
+
+    // xᵢ includes covariates and/or molecular descriptors
+    fn g_ML(x : FeatureVec) : f64 {
+        // Implementation detail: ML graph with final activation > 0
+        return softplus(nn_forward(x, w))   // dimensionless, > 0
+    }
+}
+
+model PK_With_ML_CL {
+    // Baseline parameter
+    param CL_base : Clearance    // L/h
+    param V       : Volume       // L
+
+    // Features for current entity (individual/compound)
+    input x_feat  : FeatureVec
+
+    // ML submodel for CL multiplier
+    param w_CL    : MLParamVector
+
+    fn CL_i(x : FeatureVec) : Clearance {
+        let mult : f64 = CL_MLSubmodel{w = w_CL}.g_ML(x)
+        return CL_base * mult
+    }
+
+    state A_central : DoseMass
+    dA_central/dt = -(CL_i(x_feat) / V) * A_central
+
+    obs C_plasma : ConcMass = A_central / V
+}
+```
+
+Notes:
+- The ODE structure remains classical.
+- Unit correctness is preserved:
+  - `CL_base` has `Volume/Time`,
+  - `mult` is dimensionless,
+  - `CL_i` has `Volume/Time`.
+
+This pattern is recommended for:
+- PK parameters (CL, V, Kp),
+- PD sensitivities (Emax, EC50) when informed by biomarkers.
+
+---
+
+### 8.4 Dynamics–Level Hybrids (Neural ODEs / Universal Differential Equations)
+
+A more powerful but riskier pattern is:
+
+> **Embed ML terms directly into the dynamical system's right–hand side.**
+
+Given:
+
+```
+dX/dt = f_mech(X, t, θ) + f_ML(X, t, u; w)
+```
+
+where:
+- f_mech is mechanistic,
+- f_ML is a data–driven term parameterized by w,
+- u(t) exogenous inputs (doses, biomarkers).
+
+#### 8.4.1 Example: unknown feedback in QSP
+
+Consider the QSP skeleton from §5.8 with an unknown feedback function g on cytokine influence:
+
+```
+d(Effector)/dt = k_prolif · g(Cytokine; w) · Effector - k_death · Effector
+```
+
+We can let g be an ML submodel constrained to positive, saturating behaviour.
+
+Pseudo–MedLang:
+
+```medlang
+model G_Cytokine_ML {
+    param w : MLParamVector
+
+    fn g(Cyt : ConcMass) : f64 {
+        // Convert to dimensionless via reference scale
+        let Cyt_norm : f64 = (Cyt / Cyt_ref)
+        // ML approximation with bounded output, e.g. sigmoid
+        let raw = nn_forward(Cyt_norm, w)      // unconstrained
+        return sigmoid(raw)                    // in (0,1)
+    }
+}
+
+model QSP_With_ML_Feedback {
+    // PK driver
+    input C_plasma : ConcMass
+
+    // Biological states
+    state Tumour   : TumourVolumeUnit
+    state Effector : CellCount
+    state Cytokine : ConcMass
+
+    param k_prolif : RateConst
+    param k_death  : RateConst
+
+    param w_g      : MLParamVector    // parameters for feedback function
+
+    fn g_feedback(Cyt : ConcMass) : f64 {
+        return G_Cytokine_ML{w = w_g}.g(Cyt)
+    }
+
+    dEffector/dt =
+        k_prolif * g_feedback(Cytokine) * Effector
+        - k_death * Effector
+
+    // Other dynamics elided (Tumour, Cytokine, etc.)
+
+    obs EffCellCount : CellCount = Effector
+}
+```
+
+Constraints:
+- `g_feedback` is dimensionless, bounded (e.g. [0,1]), ensuring **unit consistency** and some biological plausibility.
+- We maintain interpretability: we still know the structure (proportional to Effector, modulated by Cytokine).
+
+#### 8.4.2 Universal Differential Equations
+
+If the entire unknown dynamics are approximated by a neural network:
+
+```
+dX/dt = f_NN(X, t; w)
+```
+
+this is essentially a **Neural ODE**. Track D allows this formally, but:
+
+- v0.1 spec **recommends** using universal DE patterns only for:
+  - isolated subsystems,
+  - or exploratory modelling,
+- and encourages the presence of mechanistic terms whenever possible.
+
+Such fully data–driven dynamical components are expressed as:
+
+```medlang
+model NeuralDynamics {
+    param w : MLParamVector
+
+    state X : StateVector   // typed and unit–aware
+
+    dX/dt = NN_rhs(X, t, w) // must pass unit checks
+}
+```
+
+It is the responsibility of the implementation to ensure the ML graph respects dimensional analysis, via explicit rescaling or unit‑aware layers.
+
+---
+
+### 8.5 PINNs and Physics–Informed Learning
+
+Physics‑informed neural networks (PINNs) augment training objectives with **equation residual penalties**. Conceptually, given:
+
+- data points (tₖ, yₖ),
+- collocation points (tᶜ),
+
+we minimize:
+
+```
+ℒ(w, θ) = ∑ₖ |yₖ - ŷ(tₖ; w, θ)|² + λ ∑ᶜ |∂ₜX(tᶜ; w, θ) - f(X(tᶜ; w, θ), tᶜ, θ)|²
+          ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯   ⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯
+          data misfit                      physics residual
+```
+
+In Track D semantics, we interpret PINN training as:
+
+- a **deterministic optimization** problem (simulation‑only mode + custom loss), or
+- a **penalized likelihood** / pseudo‑Bayesian model where residual penalties act as additional "pseudodata".
+
+We do **not** fix a unique interpretation; instead we specify:
+
+1. A `PINNLoss` abstraction:
+
+```medlang
+struct PINNLoss {
+    data_term      : LossTerm   // from Measure & observed data
+    physics_term   : LossTerm   // from ODE/PDE residuals at collocation points
+    lambda         : f64        // trade-off weight
+}
+```
+
+2. An **inference configuration** that selects PINN training as an algorithmic option:
+
+```medlang
+InferenceConfig {
+    mode      = SimulationOnly
+    algorithm = Algorithm.PINN_Train    // or Hybrid
+}
+```
+
+From a probabilistic standpoint, implementations may interpret physics terms as:
+
+- log‑likelihood contributions of "virtual observations" of the ODE residual being near zero,
+- or as log–prior terms on trajectories.
+
+The spec only requires that:
+
+- the mechanistic equations are used in the loss,
+- unit and type consistency are preserved (residuals have well‑defined units).
+
+---
+
+### 8.6 Typing and Unit Constraints for ML Components
+
+To preserve the guarantees of Section 4, any ML component must satisfy:
+
+1. **Typed inputs/outputs**
+   - Inputs and outputs of ML functions must be `Quantity<Unit, _>` or dimensionless `f64`, not untyped scalars.
+   - Internally, ML layers may work in normalized, dimensionless space, but wrapping functions must perform explicit scaling.
+
+2. **Dimensional normalization**
+   - If a network consumes a dimensionful quantity Q, it must first be converted into a **dimensionless** representation, e.g.:
+     ```
+     x = Q / Q_ref
+     ```
+     where Q_ref has the same unit as Q.
+   - Activation functions like `exp`, `log`, `sin` must operate on dimensionless inputs.
+
+3. **Output unit guarantees**
+   - Outputs must be typed:
+     - dimensionless factors (e.g. multipliers),
+     - or re–dimensionalized via known reference scales.
+
+Recommended pattern:
+
+```medlang
+fn nn_predict_factor(
+    x : Quantity<UnitX, f64>,
+    w : MLParamVector
+) : f64 {
+    let x_norm : f64 = (x / X_ref)           // dimensionless
+    let raw    : f64 = nn_forward(x_norm, w) // dimensionless
+    return activation(raw)                   // e.g. sigmoid, softplus
+}
+
+fn nn_predict_quantity(
+    x : Quantity<UnitX, f64>,
+    w : MLParamVector
+) : Quantity<UnitY, f64> {
+    let factor : f64 = nn_predict_factor(x, w)  // dimensionless
+    return factor * Y_ref                       // has UnitY
+}
+```
+
+4. **Static checking at boundary**
+   - The type system does not introspect inside the ML graph, but it checks:
+     - that boundary functions respect units,
+     - that the ML outputs are used in unit‑consistent expressions.
+
+---
+
+### 8.7 Interaction with Inference Modes
+
+Hybrid models integrate naturally with the inference modes of Section 7.
+
+#### 8.7.1 Simulation‑only
+
+- ML parameters w are:
+  - loaded from pre‑trained weights,
+  - or sampled from configured distributions,
+- and kept fixed during simulation.
+
+Use cases:
+- deploy a pre‑trained ML surrogate inside PBPK/QSP for high‑throughput simulation,
+- test model behaviour under fixed learned components.
+
+#### 8.7.2 Frequentist NLME
+
+- ML parameters w may be:
+  - held fixed (pre‑trained),
+  - fine‑tuned jointly with (φ, ψ),
+  - estimated in a two‑stage process (pretrain ML on local data, then calibrate mechanistic model).
+
+Considerations:
+- ML parameter spaces are often high‑dimensional; naive joint optimization can be ill‑posed and unstable.
+- v0.1 spec **recommends**:
+  - restricting ML components to moderate size for joint NLME fitting,
+  - or pretraining ML parts separately and only fitting low‑dimensional scaling parameters in NLME mode.
+
+#### 8.7.3 Bayesian
+
+- ML parameters w are given priors (e.g. Gaussian on weights), and included in the posterior:
+  ```
+  p(φ, ψ, w, η | y)
+  ```
+- Full Bayesian treatment is computationally heavy; approximations (variational inference, low–rank representations, sparse GPs) are likely needed.
+
+Track D allows this, but recommends:
+- when possible, using **structured ML** (e.g. low–dimensional basis expansions, GP emulators with few inducing points),
+- or restricting HMC to a subset of parameters while treating ML weights via MAP/VI.
+
+Regardless of mode, MedLang semantics do not change: ML weights are just another component of the parameter vector with possible priors.
+
+---
+
+### 8.8 IR and Implementation Considerations
+
+At the IR (NIR/MLIR) level, ML integration has the following implications:
+
+1. **Separate ML subgraphs**
+   - ML submodels are represented as separate compute graphs callable from the main numerical IR.
+   - They operate on batched inputs (e.g. `[batch, features]`) for efficiency.
+
+2. **Differentiability**
+   - ML subgraphs must be differentiable w.r.t. their parameters w and inputs (where required), enabling:
+     - gradient–based NLME optimization,
+     - HMC/VI in Bayesian mode,
+     - PINN–style joint training.
+
+3. **Device placement**
+   - ML subgraphs may run on GPU/TPU, while ODE solvers may run on CPU or GPU.
+   - The IR must permit clear device annotations and data movement with minimal overhead.
+
+4. **Caching and memoization**
+   - When ML submodels compute time‑invariant quantities (e.g. CL from covariates), results can be cached per individual/compound to avoid redundant computation during iterative inference.
+
+The detailed IR design is out of scope for this document; these points serve as **requirements** for any implementation claiming Track D compliance with ML integration.
+
+---
+
+### 8.9 Summary
+
+Section 8 introduces a controlled integration of **machine learning** into MedLang Track D:
+
+- At the **parameter level**, ML predicts parameters (CL, V, Kp, PD parameters) from high‑dimensional features while mechanistic ODE structure remains intact.
+- At the **dynamics level**, ML terms can augment or partially replace right–hand sides, turning models into universal differential equations or Neural ODEs, with clear typing and unit constraints.
+- **PINN–style training** is supported conceptually via composite losses that penalize both data misfit and physics residuals.
+- All ML components are:
+  - typed and unit–checked at the boundary,
+  - compatible with simulation‑only, frequentist NLME, and Bayesian inference modes,
+  - representable and differentiable at the IR level.
+
+This enables MedLang to serve as a **unifying language** for mechanistic, statistical, and ML models in pharmacometrics and QSP, while preserving rigorous semantics and physical plausibility.
 
 ---
 
