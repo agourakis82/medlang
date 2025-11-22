@@ -321,7 +321,7 @@ The following sections are to be filled in subsequent iterations:
   - Relation to NONMEM/Monolix/Stan abstractions.
   - Hierarchical model diagrams and their encoding in MedLang.
 
-- **7. Inference Modes and Backend Contracts**
+- **7. Inference Modes and Backend Contracts** (See below)
   - Definitions of:
     - simulation–only mode (no parameter learning),
     - frequentist NLME mode (likelihood maximization),
@@ -1345,6 +1345,330 @@ This foundation enables:
 - rigorous **population–level simulation** and virtual trials,
 - integration of quantum‑derived parameters (Track C) into population models,
 - and the introduction of hybrid mechanistic–ML models in Section 8 without breaking probabilistic coherence.
+
+---
+
+## 7. Inference Modes and Backend Contracts
+
+Track D deliberately separates:
+
+- **Model specification** — what the PK/PD/QSP + population model *means*,
+- **Inference** — how parameters and random effects are estimated or sampled,
+- **Simulation** — how trajectories and virtual trials are generated.
+
+This section specifies the **inference modes** supported conceptually and the **minimal contracts** that MedLang Track D must expose to inference backends (frequentist NLME engines, probabilistic programming systems, or custom solvers).
+
+### 7.1 Design Goals
+
+Inference design in Track D is guided by the following principles:
+
+1. **Separation of concerns**  
+   The same MedLang model should be usable for:
+   - forward simulation only,
+   - frequentist NLME estimation,
+   - Bayesian inference and posterior predictive simulation,
+   
+   without changing the model definition itself; only inference configuration changes.
+
+2. **Backend‑agnostic semantics**  
+   MedLang defines the **probabilistic semantics** (joint density, likelihood, priors) in a backend‑neutral way. Different engines (FOCE, SAEM, HMC, VI, etc.) can be plugged in as long as they implement a simple log‑density and differentiation interface.
+
+3. **Differentiability and AD compatibility**  
+   Where possible, structural and probabilistic components are differentiable with respect to parameters, enabling:
+   - gradient‑based optimization for ML/MLE/NLME,
+   - gradient‑based MCMC (e.g. HMC/NUTS),
+   - sensitivity analysis.
+
+4. **Batching and vectorization**  
+   Population models must be evaluable in **batched** form across individuals and time points, allowing efficient CPU/GPU execution.
+
+5. **Determinism and reproducibility**  
+   Given:
+   - a model definition,
+   - a dataset,
+   - an inference configuration (algorithm, seeds, tolerances),
+   
+   MedLang should make the resulting inference **reproducible** up to differences introduced by stochastic algorithms and floating‑point rounding.
+
+---
+
+### 7.2 Inference Modes
+
+Track D supports three conceptual inference modes:
+
+1. **Simulation‑only mode**  
+   - No parameter estimation; all parameters and random effects are user‑specified or sampled from priors.
+   - Used for:
+     - scenario analysis,
+     - virtual clinical trials,
+     - design exploration (dose regimen, covariate distributions).
+
+2. **Frequentist NLME mode** (maximum likelihood / penalized likelihood)  
+   - Population parameters (φ, Ω, ψ) are treated as unknown fixed quantities.
+   - Estimation seeks:
+     ```
+     (φ̂, Ω̂, ψ̂) = argmax_{φ,Ω,ψ} log L(φ, Ω, ψ; y)
+     ```
+   - Random effects ηᵢ are latent variables integrated out or approximated (FO, FOCE, Laplace, SAEM).
+
+3. **Bayesian mode**  
+   - Population parameters and random effects are endowed with priors p(φ, Ω, ψ).
+   - Inference targets the posterior:
+     ```
+     p(φ, Ω, ψ, η | y) ∝ p(φ, Ω, ψ) ∏ᵢ p(ηᵢ | Ω) ∏ⱼ p(yᵢⱼ | θᵢ(φ, zᵢ, ηᵢ), ψ)
+     ```
+   - Usually implemented via MCMC (HMC/NUTS), SMC, or variational inference.
+
+Each mode consumes **the same MedLang representation** of the model; only the **algorithmic backend** and **configuration** differ.
+
+---
+
+### 7.3 Core Backend Contract: Log‑Densities and Simulation
+
+Any backend that performs inference on a Track D population model must be able to:
+
+1. **Evaluate log‑densities** for:
+   - **Random effects**:
+     ```
+     log p(ηᵢ | Ω)
+     ```
+     via the `ProbKernel` interface.
+   - **Observation models**:
+     ```
+     log p(yᵢⱼ | ŷᵢⱼ, ψ)
+     ```
+     via the `Measure` interface.
+
+2. **Simulate structural trajectories** for a given individual:
+   ```
+   Xᵢ(t) = solve(f, X₀,ᵢ, θᵢ, 𝒯ᵢ)
+   ```
+   using the Track D `Model` and `Timeline`. This may involve:
+   - ODE/PDE solvers,
+   - handling of dosing and observation events.
+
+3. **Compose log‑likelihoods** across individuals and observations:
+   ```
+   log p(y | φ, Ω, ψ, η) = ∑ᵢ₌₁ᴺ ∑ⱼ₌₁ⁿⁱ log p(yᵢⱼ | ŷᵢⱼ(θᵢ), ψ)
+   ```
+
+4. **(Optional but recommended) Compute gradients** of relevant log‑densities w.r.t. parameters:
+   - ∇_{φ,Ω,ψ} log L(φ, Ω, ψ; y),
+   - ∇_{φ,Ω,ψ,η} log p(φ, Ω, ψ, η | y) in Bayesian mode.
+
+MedLang itself does not define the **numerical method** for these operations; it defines a **uniform interface** at the IR level (see §10).
+
+---
+
+### 7.4 Simulation‑Only Mode
+
+In pure simulation mode, no fitting is performed. Instead, the population model is used as a **generator** of trajectories and synthetic data.
+
+#### 7.4.1 Individual simulation
+
+Given:
+- structural `Model`,
+- parameter vector θ,
+- `Timeline` 𝒯,
+
+the backend implements:
+
+```text
+simulate_individual(Model, θ, Timeline) -> Trajectory
+```
+
+where `Trajectory` contains:
+- time grid and state trajectories X(t),
+- derived observables ŷ(t).
+
+#### 7.4.2 Population simulation (virtual trial)
+
+Given:
+- `PopulationModel` (structural model + random–effects + residual error),
+- `Cohort` specification with covariate distributions and dosing regimens,
+
+the backend implements:
+
+```text
+simulate_population(PopulationModel, CohortSpec, n_subjects) -> SimData
+```
+
+Typical steps:
+
+1. For each virtual subject i:
+   - Sample covariates zᵢ from the specified distributions,
+   - Sample random effects ηᵢ ~ p(η | Ω),
+   - Construct θᵢ = g(φ, zᵢ, ηᵢ),
+   - Simulate Xᵢ(t) and predictions ŷᵢⱼ,
+   - Sample measurement noise and generate synthetic yᵢⱼ.
+
+2. Aggregate into a synthetic dataset `SimData` with a structure analogous to real data.
+
+This mode is crucial for:
+- design evaluation (power, exposure–response),
+- virtual populations and virtual clinical trials,
+- stress‑testing models.
+
+---
+
+### 7.5 Frequentist NLME Mode: Likelihood Engines
+
+In frequentist NLME mode, the backend is a **likelihood engine** operating on Track D models.
+
+#### 7.5.1 Required operations
+
+The backend must be able to:
+
+1. **Build the integrated log‑likelihood**:
+   ```
+   log L(φ, Ω, ψ; y) = ∑ᵢ₌₁ᴺ log ∫ p(ηᵢ | Ω) ∏ⱼ p(yᵢⱼ | θᵢ(φ, zᵢ, ηᵢ), ψ) dηᵢ
+   ```
+   using approximations as appropriate (Laplace, FO, FOCE, SAEM, etc.).
+
+2. Optionally compute **gradients and Hessians**:
+   - For gradient‑based optimizers: ∇_{φ,Ω,ψ} log L,
+   - For approximate standard errors: Hessian or observed Fisher information.
+
+3. Accept **constraints** and **reparameterizations**:
+   - positivity constraints (e.g. for variances, volumes, clearances),
+   - correlation structures (Cholesky factorization of covariance matrices),
+   - transformation between internal and user parameterizations.
+
+#### 7.5.2 Contract at the IR level
+
+At the IR level (NIR), Track D guarantees:
+
+- Random effects distributions are represented as composable `logpdf` ops,
+- Structural models are represented as calls to ODE/PDE solvers with differentiable dependence on parameters,
+- `Measure`s yield log‑likelihood contributions with correct units.
+
+A frequentist backend may:
+- treat random effects as latent variables and approximate the integrals, or
+- approximate the full joint mode (e.g. Laplace approx to the posterior), or
+- employ SAEM‑like stochastic approximation.
+
+The spec does **not** impose a particular algorithm, only that:
+- the backend uses the Track D log‑density structure,
+- results correspond to maximizing (an approximation of) the integrated likelihood.
+
+---
+
+### 7.6 Bayesian Mode: Probabilistic Programming Backends
+
+In Bayesian mode, the same Track D model is interpreted as specifying a **joint posterior** over:
+- population parameters (φ, Ω, ψ),
+- random effects η.
+
+#### 7.6.1 Priors via `ProbKernel`
+
+Priors are attached to:
+- fixed effects (e.g. log‑normal or normal priors on `TV_CL`, `TV_V`),
+- covariance parameters (e.g. priors on Cholesky factors of Ω),
+- residual error parameters (e.g. half‑normal priors on σ parameters).
+
+Example (conceptual):
+
+```medlang
+prior TV_CL ~ LogNormal(mean_log = log(CL_ref), sd_log = 0.5)
+prior TV_V  ~ LogNormal(mean_log = log(V_ref),  sd_log = 0.5)
+prior omega_CL ~ HalfNormal(sd = 1.0)
+prior omega_V  ~ HalfNormal(sd = 1.0)
+prior sigma_prop ~ HalfNormal(sd = 0.5)
+```
+
+At the IR level, these are simply further `ProbKernel`s with `logpdf` definitions.
+
+#### 7.6.2 Backend contract for Bayesian inference
+
+A Bayesian backend (e.g. Stan, PyMC, NumPyro) must:
+
+1. Construct the **joint log‑density**:
+   ```
+   log p(φ, Ω, ψ, η, y) = log p(φ, Ω, ψ) + ∑ᵢ log p(ηᵢ | Ω) + ∑ᵢⱼ log p(yᵢⱼ | ŷᵢⱼ, ψ)
+   ```
+
+2. Provide **sampling** or **approximate inference**:
+   - MCMC (e.g. HMC / NUTS),
+   - SMC,
+   - variational inference (e.g. ADVI, structured VI).
+
+3. Expose **posterior samples** in a way that MedLang can:
+   - perform posterior predictive simulation,
+   - compute summary statistics (credible intervals, posterior means),
+   - support diagnostic tools (e.g. convergence diagnostics, R‑hat, ESS) at a higher layer.
+
+MedLang's IR must be translatable to a probabilistic programming representation (e.g. a Stan program), but the exact compilation path is delegated to the implementation.
+
+---
+
+### 7.7 Configuration of Inference Runs
+
+A Track D **inference configuration** is a metadata object that specifies:
+
+- **Mode:** `SimulationOnly`, `FrequentistNLME`, or `Bayesian`.
+- **Backend:** e.g. `Backend.NONMEM_like`, `Backend.Stan`, `Backend.InHouse`.
+- **Algorithm details:** learning rates, tolerances, max iterations, etc.
+- **Random seeds:** for reproducibility.
+- **Output requirements:** which posterior quantities or diagnostics to save.
+
+Conceptually:
+
+```text
+InferenceConfig = {
+    mode:      InferenceMode,
+    backend:   BackendKind,
+    algorithm: AlgorithmSettings,
+    seed:      int,
+    outputs:   OutputSpec
+}
+```
+
+MedLang itself does not standardize all fields, but requires that:
+- the mode is explicit,
+- the backend is identified,
+- enough configuration is present for reproducible runs.
+
+---
+
+### 7.8 Error Handling, Diagnostics, and Robustness Considerations
+
+Inference backends should surface diagnostics that can be associated back to model elements:
+
+- **Integration failures** (stiff ODE, divergence):
+  - Provide time, individual, and parameter context,
+  - Allow the user to adjust tolerances or reparameterize.
+
+- **Non‑identifiability / flat likelihood**:
+  - Indicate parameters with weak information,
+  - Suggest regularization or priors.
+
+- **Pathological random‑effects distributions**:
+  - E.g. non‑positive definite covariance estimates,
+  - E.g. estimated variances collapsing toward zero.
+
+While the details of diagnostic reporting are implementation‑specific, Track D encourages:
+- linking error messages to specific `Model` states, parameters, `ProbKernel`s, and `Measure`s,
+- using the MedLang source structure (file names, line numbers) where possible.
+
+---
+
+### 7.9 Summary
+
+Section 7 defines:
+
+- the **inference modes** (simulation‑only, frequentist NLME, Bayesian),
+- a **minimal backend contract** in terms of log‑densities, simulation, and differentiation,
+- how MedLang Track D models are consumed by:
+  - likelihood engines in the frequentist setting,
+  - probabilistic programming systems in the Bayesian setting,
+- and how inference configurations and diagnostics integrate with the language.
+
+This abstraction allows:
+- swapping backends without rewriting models,
+- leveraging existing tools (NONMEM‑like engines, Stan, PyMC) via compilation from the MedLang IR,
+- and future extensions (e.g. PINN‑based inference, differentiable programming) without changing model semantics.
+
+Subsequent sections (§8–§10) will address hybrid mechanistic–ML integration, worked examples, and explicit IR mappings that make these contracts concrete in an implementation.
 
 ---
 
