@@ -338,7 +338,7 @@ The following sections are to be filled in subsequent iterations:
   - **Example 2:** Simple QSP model (drug + biomarker + tumor) with random effects.
   - **Example 3 (optional):** PBPK model with quantum‑derived parameters via `Compile_QM→PK`.
 
-- **10. Implementation Notes and IR Mapping**
+- **10. Implementation Notes and IR Mapping** ✓ (See below)
   - How Track D constructs are represented in CIR and NIR.
   - Lowering patterns to MLIR (ODE op, log–pdf ops, event handling).
   - Considerations for batched simulation and GPU execution.
@@ -2692,8 +2692,625 @@ All operations type-check correctly; any unit mismatch (e.g., adding `mg` and `L
 
 ## 10. Implementation Notes and IR Mapping
 
-(To be filled: CIR/NIR representation, MLIR lowering, GPU batching considerations)
+This section describes how Track D constructs are **represented and lowered** through MedLang's intermediate representation (IR) layers, ultimately reaching executable numeric/symbolic code and inference backends. It is intended for compiler and backend developers, not for end users.
+
+### 10.1 Overview of IR Layers
+
+MedLang adopts a **multi-level IR strategy** to balance:
+
+- **high-level semantic clarity** (medical/pharmacometric domain),
+- **middle-level generality** (numeric and probabilistic operations),
+- **low-level optimization** (MLIR/LLVM for hardware).
+
+The canonical flow is:
+
+```
+MedLang Surface Syntax (Track D models, timelines, measures)
+          ↓
+    Clinical IR (CIR)
+          ↓
+    Numeric / Neural IR (NIR)
+          ↓
+    MLIR dialects (linalg, affine, scf, arith, func, etc.)
+          ↓
+    LLVM IR / GPU backends (CUDA, ROCm, etc.)
+```
+
+Each layer has distinct responsibilities:
+
+1. **CIR (Clinical IR)**  
+   Represents Track D models as typed, hierarchical objects:
+   - `cir.model` (structural dynamics, observables, parameters),
+   - `cir.timeline` (dosing/observation events),
+   - `cir.measure` (observation models, residual error),
+   - `cir.prob_kernel` (random effects, priors),
+   - `cir.cohort` (patient data, covariates).
+
+   CIR is **still domain-aware** and **unit-typed**.
+
+2. **NIR (Numeric/Neural IR)**  
+   Lowers domain-specific constructs to **composable numeric primitives**:
+   - ODE/PDE integration ops,
+   - log-pdf evaluations for distributions,
+   - batched simulation and likelihood aggregation,
+   - ML subgraph calls (for hybrid models).
+
+   NIR is **unit-erased** (units have been checked and removed) but **shape-typed** (tensors have static or dynamic shapes).
+
+3. **MLIR / LLVM**  
+   Standard compiler infrastructure:
+   - loop optimization, vectorization, parallelization,
+   - device placement (CPU, GPU, TPU),
+   - final code generation.
+
+This section focuses on **CIR → NIR → MLIR** mappings relevant to Track D.
 
 ---
 
-*This specification is a living document and will evolve as Track D matures. Sections 4–10 will be filled iteratively with formal definitions, worked examples, and implementation guidance.*
+### 10.2 CIR Representation of Track D Constructs
+
+#### 10.2.1 `cir.model`
+
+A Track D `Model` is represented in CIR as a **structured operation** with:
+
+- **State schema**: list of state variables with types and units,
+- **Parameter schema**: list of parameters with types and units,
+- **Dynamics region**: a control-flow graph (CFG) encoding the right-hand side of ODEs/PDEs,
+- **Observables region**: pure functions mapping `(State, Param) → Observable`,
+- **Input bindings**: how `Timeline` events are mapped to input signals `u(t)`.
+
+Example (conceptual MLIR-like syntax):
+
+```mlir
+cir.model @OneCptOralPK
+  state_type   = !cir.struct<A_depot: !qty<mg, f64>, A_central: !qty<mg, f64>>
+  param_type   = !cir.struct<CL: !qty<L/h, f64>, V: !qty<L, f64>, Ka: !qty</h, f64>>
+  input_type   = !cir.struct<dose_rate: !qty<mg/h, f64>>
+{
+  // Right-hand side function: f(X, θ, u, t) → dX/dt
+  cir.dynamics {
+    ^entry(%X: !state_type, %theta: !param_type, %u: !input_type, %t: !qty<h, f64>):
+      %dA_depot   = cir.mul %theta.Ka, %X.A_depot : (!qty<1/h>, !qty<mg>) -> !qty<mg/h>
+      %dA_depot_neg = cir.neg %dA_depot : !qty<mg/h>
+      
+      %dA_central_1 = %dA_depot : !qty<mg/h>   // absorption term
+      %dA_central_2 = cir.div %theta.CL, %theta.V : (!qty<L/h>, !qty<L>) -> !qty<1/h>
+      %dA_central_3 = cir.mul %dA_central_2, %X.A_central : (!qty<1/h>, !qty<mg>) -> !qty<mg/h>
+      %dA_central_neg = cir.neg %dA_central_3 : !qty<mg/h>
+      %dA_central = cir.add %dA_central_1, %dA_central_neg, %u.dose_rate : !qty<mg/h>
+      
+      cir.yield %dA_depot_neg, %dA_central : !qty<mg/h>, !qty<mg/h>
+  }
+  
+  // Observable: C_plasma = A_central / V
+  cir.observable @C_plasma {
+    ^entry(%X: !state_type, %theta: !param_type):
+      %C = cir.div %X.A_central, %theta.V : (!qty<mg>, !qty<L>) -> !qty<mg/L>
+      cir.yield %C : !qty<mg/L>
+  }
+}
+```
+
+At this level:
+
+- **Units are explicit** and type-checked,
+- Control flow is simple (no loops/conditionals in this example, but allowed for complex QSP),
+- The representation is **backend-agnostic**.
+
+#### 10.2.2 `cir.timeline`
+
+A `Timeline` is represented as:
+
+- A sequence of **event records**, each with:
+  - time stamp,
+  - event type (dose, observation, covariate change),
+  - payload (e.g., dose amount, route, target compartment).
+
+Example:
+
+```mlir
+cir.timeline @example_dosing : !cir.timeline<DoseEvent> {
+  cir.event @dose1 { time = 0.0 : !qty<h, f64>, amount = 100.0 : !qty<mg, f64>, route = Oral, target = "A_depot" }
+  cir.event @dose2 { time = 12.0 : !qty<h, f64>, amount = 50.0 : !qty<mg, f64>, route = Oral, target = "A_depot" }
+}
+
+cir.timeline @example_sampling : !cir.timeline<ObsEvent> {
+  cir.event @obs1 { time = 0.5 : !qty<h, f64> }
+  cir.event @obs2 { time = 1.0 : !qty<h, f64> }
+  // ...
+}
+```
+
+Timelines are **data**, not compute; they will be lowered to control parameters for ODE solvers (discontinuities, output grid).
+
+#### 10.2.3 `cir.prob_kernel`
+
+Random effects and priors are represented as **parameterized probability kernels**:
+
+```mlir
+cir.prob_kernel @PopulationVariability
+  hyper_type = !cir.struct<omega_CL: f64, omega_V: f64, omega_Ka: f64, rho_CL_V: f64>
+  input_type = !cir.struct<weight: !qty<kg, f64>>
+  output_type = !cir.struct<eta_CL: f64, eta_V: f64, eta_Ka: f64>
+{
+  cir.logpdf {
+    ^entry(%hyper: !hyper_type, %input: !input_type, %eta: !output_type):
+      // Construct covariance matrix
+      %Omega = cir.build_cov_matrix %hyper.omega_CL, %hyper.omega_V, %hyper.omega_Ka, %hyper.rho_CL_V
+      // log pdf of MVN(0, Omega)
+      %logpdf = cir.mvn_logpdf %eta, %Omega
+      cir.yield %logpdf : f64
+  }
+  
+  cir.sample {
+    ^entry(%hyper: !hyper_type, %input: !input_type, %rng_state: !cir.rng):
+      %Omega = cir.build_cov_matrix %hyper.omega_CL, %hyper.omega_V, %hyper.omega_Ka, %hyper.rho_CL_V
+      %eta = cir.mvn_sample %Omega, %rng_state
+      cir.yield %eta : !output_type
+  }
+}
+```
+
+This allows backends to:
+
+- **evaluate log-densities** (for likelihood/posterior computation),
+- **sample** (for forward simulation or MCMC).
+
+#### 10.2.4 `cir.measure`
+
+Observation models are similarly represented with `logpdf` and `sample` regions:
+
+```mlir
+cir.measure @ProportionalError
+  pred_type = !qty<mg/L, f64>
+  obs_type  = !qty<mg/L, f64>
+  param_type = !cir.struct<sigma_prop: f64>
+{
+  cir.logpdf {
+    ^entry(%pred: !pred_type, %obs: !obs_type, %param: !param_type):
+      %sd = cir.mul %param.sigma_prop, %pred : (f64, !qty<mg/L>) -> !qty<mg/L>
+      %logpdf = cir.normal_logpdf %obs, %pred, %sd
+      cir.yield %logpdf : f64
+  }
+  
+  cir.sample {
+    ^entry(%pred: !pred_type, %param: !param_type, %rng_state: !cir.rng):
+      %sd = cir.mul %param.sigma_prop, %pred
+      %obs = cir.normal_sample %pred, %sd, %rng_state
+      cir.yield %obs : !obs_type
+  }
+}
+```
+
+---
+
+### 10.3 NIR: Numeric Building Blocks
+
+NIR is **unit-erased** and **tensor-oriented**. It provides a small set of **high-level numeric operations** that CIR lowers to.
+
+#### 10.3.1 ODE Integration
+
+CIR dynamics regions are lowered to an **ODE integration operation**:
+
+```mlir
+%trajectory = nir.ode_integrate(
+    %f       : (tensor<?x?xf64>, tensor<?xf64>, f64) -> tensor<?x?xf64>,  // RHS function
+    %X0      : tensor<?x?xf64>,      // initial states [batch, n_state]
+    %theta   : tensor<?x?xf64>,      // parameters [batch, n_param]
+    %controls: !nir.ode_controls,    // dosing events, discontinuities
+    %t_grid  : tensor<?xf64>,        // output time grid
+    %solver_cfg: !nir.solver_config  // tolerances, method
+) -> tensor<?x?x?xf64>               // [batch, n_time, n_state]
+```
+
+Key features:
+
+- **Batched**: operates on multiple individuals/parameter sets in parallel,
+- **Differentiable**: supports adjoint/forward sensitivity for gradients,
+- **Event handling**: `controls` encodes dose times, infusion start/stop, observation grid.
+
+The RHS function `f` is itself a NIR function built from the CIR dynamics region, with units stripped.
+
+#### 10.3.2 Probability Density Operations
+
+Each `cir.prob_kernel` and `cir.measure` lowers to NIR ops:
+
+```mlir
+%logpdf = nir.logpdf_mvn(
+    %x    : tensor<?xf64>,     // random variable value
+    %mu   : tensor<?xf64>,     // mean
+    %Sigma: tensor<?x?xf64>    // covariance
+) -> f64
+
+%sample = nir.sample_mvn(
+    %mu   : tensor<?xf64>,
+    %Sigma: tensor<?x?xf64>,
+    %rng  : !nir.rng_state
+) -> tensor<?xf64>
+```
+
+Similarly for other distributions (Normal, LogNormal, HalfNormal, etc.).
+
+#### 10.3.3 Likelihood Aggregation
+
+Population-level log-likelihood is built from:
+
+1. **Per-individual trajectory simulation**:
+   ```mlir
+   %traj_i = nir.ode_integrate(...)
+   ```
+
+2. **Observable extraction** at observation times:
+   ```mlir
+   %pred_ij = nir.gather(%traj_i, %obs_times_i)
+   ```
+
+3. **Log-likelihood contribution per observation**:
+   ```mlir
+   %loglik_ij = nir.logpdf_normal(%obs_ij, %pred_ij, %sigma_ij)
+   ```
+
+4. **Summing over observations and individuals**:
+   ```mlir
+   %loglik_total = nir.reduce_sum(%loglik_ij)
+   ```
+
+This is expressed as a **batched map-reduce** over the cohort.
+
+---
+
+### 10.4 Lowering Timeline to Numeric Controls
+
+A `cir.timeline` with dose and observation events is lowered to:
+
+1. **Discontinuity grid**: time points where ODE solver must stop/restart (dose times, infusion start/stop),
+2. **Impulse injections**: instantaneous additions to state at dose times,
+3. **Infusion schedules**: piecewise-constant input function `u(t)`,
+4. **Observation grid**: time points where observables are evaluated.
+
+Example lowering (pseudo-code):
+
+```python
+def lower_timeline(timeline: cir.Timeline, model: cir.Model) -> nir.ODEControls:
+    dose_times = [event.time for event in timeline if event.type == Dose]
+    obs_times  = [event.time for event in timeline if event.type == Obs]
+    
+    # Build piecewise-constant input function u(t)
+    u_intervals = []
+    for event in sorted(timeline, key=lambda e: e.time):
+        if event.type == StartInfusion:
+            u_intervals.append((event.time, inf, event.rate, event.target))
+        elif event.type == StopInfusion:
+            u_intervals.append((event.time, inf, 0.0, event.target))
+        elif event.type == Bolus:
+            # Impulse: handled separately as state reset
+            pass
+    
+    return nir.ODEControls(
+        discontinuities = sorted(set(dose_times)),
+        impulses        = [(t, amount, compartment) for t, amount, compartment in bolus_doses],
+        input_function  = piecewise_constant(u_intervals),
+        output_grid     = sorted(obs_times)
+    )
+```
+
+This control structure is passed to the ODE integrator, which:
+
+- stops at each discontinuity,
+- applies impulses to the state,
+- evaluates the input function `u(t)` as needed,
+- outputs state at the observation grid.
+
+---
+
+### 10.5 Population Model Batching
+
+For efficient inference, NIR represents **batched operations** over populations:
+
+- States: `tensor<[N_indiv, N_state], f64>`
+- Parameters: `tensor<[N_indiv, N_param], f64>`
+- Trajectories: `tensor<[N_indiv, N_time, N_state], f64>`
+
+**Random effects** are sampled in batch:
+
+```mlir
+%eta_batch = nir.sample_mvn_batch(
+    %mu    = constant 0.0 : tensor<3xf64>,
+    %Sigma = %Omega : tensor<3x3xf64>,
+    %N     = %N_indiv : index,
+    %rng   = %rng_state
+) -> tensor<?x3xf64>   // [N_indiv, 3]
+```
+
+**Individual parameters** are computed in batch via vectorized transformations:
+
+```mlir
+%CL_batch = nir.mul(
+    %CL_pop,
+    nir.pow(%WT_batch / 70.0, 0.75),
+    nir.exp(%eta_CL_batch)
+) -> tensor<?xf64>
+```
+
+**ODE integration** is vectorized:
+
+```mlir
+%traj_batch = nir.ode_integrate_batch(
+    %f, %X0_batch, %theta_batch, %controls_batch, %t_grid, %solver_cfg
+) -> tensor<?x?x?xf64>
+```
+
+This batching is critical for:
+
+- **GPU execution**: batch size becomes the parallel dimension,
+- **Efficient MCMC**: evaluate likelihood for all individuals in a single kernel launch,
+- **Virtual trials**: simulate thousands of individuals concurrently.
+
+---
+
+### 10.6 Backend Mapping
+
+NIR is designed to be **lowered to multiple backends**:
+
+#### 10.6.1 Frequentist NLME Backends
+
+For backends like NONMEM, Monolix, or custom FOCE/SAEM engines:
+
+- **Export CIR model** to backend-specific syntax (e.g., `$PK`, `$DES`, `$ERROR` for NONMEM),
+- **Map `cir.prob_kernel`** to `OMEGA` / `ETA` definitions,
+- **Map `cir.measure`** to `$ERROR` / `SIGMA` / `EPS`,
+- **Map `cir.timeline`** to dosing records and observation grid.
+
+NIR can also **drive custom engines** directly:
+
+- Compile NIR to LLVM or GPU code,
+- Implement Laplace approximation or SAEM in the runtime,
+- Use NIR `ode_integrate` and `logpdf` ops as building blocks.
+
+#### 10.6.2 Bayesian / PPL Backends
+
+For backends like Stan, PyMC, NumPyro:
+
+- **Export NIR to Stan code**:
+  - NIR ODE ops → Stan `ode_rk45` or Torsten `pmx_solve_*`,
+  - NIR logpdf ops → Stan `target +=` statements,
+  - NIR parameters → Stan `parameters` block,
+  - CIR priors → Stan priors in `model` block.
+
+- **Export NIR to JAX/PyTorch**:
+  - NIR → JAX `jax.lax.scan` + `diffrax.diffeqsolve`,
+  - NIR logpdf → `jax.scipy.stats.*` or `torch.distributions.*`,
+  - Use NumPyro/Pyro for MCMC on top.
+
+The MedLang compiler provides **modular exporters** for each target.
+
+#### 10.6.3 Custom GPU/HPC Backends
+
+For high-performance simulation or likelihood evaluation:
+
+- **Lower NIR to MLIR**:
+  - `nir.ode_integrate` → custom MLIR dialect for ODE solvers (or library calls),
+  - `nir.logpdf_*` → inlined math ops (log, exp, matrix ops),
+  - batched ops → `linalg` / `affine` / `scf` dialects with parallel loops.
+
+- **Lower MLIR to GPU**:
+  - `scf.parallel` → `gpu.launch`,
+  - `linalg.generic` → custom CUDA/ROCm kernels or library calls (cuBLAS, cuSolver, etc.),
+  - Final LLVM IR → PTX or GCN assembly.
+
+This path is essential for:
+
+- **Virtual clinical trials** with millions of individuals,
+- **Real-time Bayesian updating** in clinical decision support,
+- **Large-scale QSP** with 100+ ODEs and complex networks.
+
+---
+
+### 10.7 ML / Hybrid Model Integration in IR
+
+For Track D models with ML components (Section 8):
+
+#### 10.7.1 CIR Representation
+
+ML submodels are represented as **opaque function calls** in CIR:
+
+```mlir
+cir.ml_submodel @CL_NN
+  input_type  = !cir.tensor<f64, [?,10]>   // [batch, 10 features]
+  output_type = !cir.tensor<f64, [?]>      // [batch] dimensionless multiplier
+  param_type  = !cir.ml_params<"torch_state_dict", "cl_nn.pt">
+{
+  cir.call_external @torch_forward
+}
+```
+
+This defers the actual ML computation to an **external runtime** (PyTorch, JAX, TensorFlow).
+
+#### 10.7.2 NIR Representation
+
+In NIR, ML calls become:
+
+```mlir
+%CL_mult = nir.ml_call(
+    @CL_NN,
+    %features : tensor<?x10xf64>,
+    %weights  : !nir.ml_weights
+) -> tensor<?xf64>
+```
+
+with well-defined:
+
+- **Forward pass** (evaluation),
+- **Backward pass** (gradients w.r.t. weights and inputs, for end-to-end differentiation).
+
+#### 10.7.3 Differentiation Through ML and ODE
+
+For PINN-style training or joint parameter estimation:
+
+- NIR must support **automatic differentiation** through:
+  - ML subgraph calls,
+  - ODE integration (via adjoint method or forward sensitivity).
+
+- The compiler constructs a **reverse-mode AD graph** that:
+  - Backpropagates through ML layers,
+  - Backpropagates through ODE solver (adjoint state),
+  - Computes gradients of loss w.r.t. all parameters (mechanistic + ML).
+
+This is conceptually similar to:
+
+- **JAX**: `jax.grad` through `diffrax.diffeqsolve`,
+- **PyTorch**: `torch.autograd` through `torchdiffeq.odeint`.
+
+MedLang's IR is designed to enable **similar flows** but with:
+
+- **explicit unit checking** at CIR level,
+- **backend flexibility** (not tied to a single AD framework).
+
+---
+
+### 10.8 Diagnostics and Debug Information
+
+The IR preserves **source location metadata** from the MedLang surface syntax:
+
+- Each CIR/NIR operation is annotated with:
+  - source file,
+  - line/column,
+  - user-visible names (e.g., "CL", "A_central").
+
+This enables:
+
+- **Error reporting**: "ODE integration failed for individual 42 at parameter CL=15.3 L/h (line 23 of model.med)",
+- **Profiling**: "90% of runtime spent in ODE solver for Model @OneCptOralPK",
+- **Debugging**: step through IR transformations while preserving link to source.
+
+Implementations should emit:
+
+- **DWARF debug info** for compiled code (if lowering to LLVM),
+- **Stack traces** linking NIR ops back to CIR and surface syntax.
+
+---
+
+### 10.9 Testing and Validation Strategy
+
+Implementations of Track D must validate correctness at each IR level:
+
+#### 10.9.1 CIR Validation
+
+- **Type checking**: all operations respect unit and type rules,
+- **Well-formedness**: models have required regions (dynamics, observables), timelines are sorted, etc.
+
+#### 10.9.2 NIR Validation
+
+- **Shape consistency**: tensor operations have compatible shapes,
+- **Numerical correctness**: ODE integrators meet tolerance specs, probability densities normalize (where analytically checkable).
+
+#### 10.9.3 End-to-End Validation
+
+Compare MedLang implementations against **reference solutions**:
+
+1. **NONMEM comparison**:
+   - Translate a MedLang model to NONMEM,
+   - Run both on the same dataset,
+   - Compare parameter estimates (should match within numerical tolerance).
+
+2. **Stan comparison**:
+   - Translate to Stan,
+   - Compare posterior distributions (KL divergence, Wasserstein distance).
+
+3. **Analytic test cases**:
+   - Use models with known closed-form solutions (1-compartment IV bolus),
+   - Verify trajectories match analytic formulas.
+
+4. **Stochastic tests**:
+   - Run virtual trials with known parameters,
+   - Verify that parameter estimates recover true values (bias, MSE, coverage).
+
+A **reference test suite** should be maintained in the MedLang repository, covering:
+
+- canonical PK/PD models,
+- NLME fitting scenarios,
+- Bayesian inference cases,
+- hybrid ML models.
+
+---
+
+### 10.10 Performance Considerations
+
+#### 10.10.1 ODE Solver Choice
+
+Different models require different solvers:
+
+- **Non-stiff**: explicit RK methods (RK45, Dormand-Prince),
+- **Stiff**: implicit methods (CVODE, Radau),
+- **Large QSP**: sparse Jacobian exploitation, Krylov methods.
+
+NIR `solver_config` allows per-model tuning; backends should:
+
+- **Auto-select** solvers based on model characteristics (Jacobian sparsity, stiffness detection),
+- **Expose tuning knobs** for tolerances, max steps, etc.
+
+#### 10.10.2 Batching and Parallelism
+
+For population models with N individuals:
+
+- **CPU**: parallelize over individuals (OpenMP, thread pools),
+- **GPU**: batch as many individuals as fit in memory, SIMD/SIMT execution.
+
+Typical GPU kernel structure:
+
+```cuda
+__global__ void population_likelihood_kernel(
+    float* theta_batch,    // [N, P]
+    float* eta_batch,      // [N, Q]
+    float* observations,   // [N, T]
+    float* output_loglik   // [N]
+) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < N) {
+        // Integrate ODE for individual i
+        // Compute log-likelihood for individual i
+        output_loglik[i] = ...;
+    }
+}
+```
+
+For very large N (millions), use **multi-GPU** strategies with MPI or NCCL.
+
+#### 10.10.3 Gradient Computation
+
+For NLME optimization or HMC:
+
+- **Adjoint method** for ODE gradients (O(1) memory, backward pass),
+- **Forward sensitivity** for low-dimensional parameters (parallel gradient computation),
+- **Automatic differentiation** for ML components.
+
+Backends should choose method based on:
+
+- number of parameters vs. number of states,
+- memory constraints,
+- hardware (GPU adjoint solvers are complex but feasible).
+
+---
+
+### 10.11 Summary
+
+Section 10 provides:
+
+- A **map of IR layers** (CIR → NIR → MLIR → LLVM/GPU),
+- **Concrete representations** of Track D constructs (`model`, `timeline`, `prob_kernel`, `measure`) in CIR,
+- **Lowering patterns** to numeric operations in NIR (ODE integration, probability ops, batched execution),
+- **Backend export strategies** for NONMEM, Stan, custom GPU solvers,
+- **ML integration** at the IR level (external calls, differentiation),
+- **Testing and validation** requirements,
+- **Performance considerations** for real-world pharmacometric workloads.
+
+This establishes Track D as:
+
+- **Implementable** with clear compilation paths,
+- **Interoperable** with existing tools,
+- **High-performance** via modern compiler and hardware optimizations,
+- **Extensible** to quantum-derived parameters (Track C) and multi-scale models (future tracks).
+
+---
+
+*This completes the initial draft of the MedLang Pharmacometrics & QSP Specification v0.1. All outlined sections (1–10) are now filled. Future iterations will refine formal semantics, add additional examples (PBPK, QSP with quantum parameters), and incorporate feedback from implementation experience.*
