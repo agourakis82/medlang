@@ -309,7 +309,7 @@ The following sections are to be filled in subsequent iterations:
   - Dimensional analysis rules for ODE right–hand sides.
   - Type rules for `Timeline` events and `Measure`s.
 
-- **5. Structural Model Patterns**
+- **5. Structural Model Patterns** ✓ (See below)
   - Canonical building blocks:
     - 1‑compartment and 2‑compartment PK.
     - Saturable and time‑varying clearance.
@@ -342,6 +342,593 @@ The following sections are to be filled in subsequent iterations:
   - How Track D constructs are represented in CIR and NIR.
   - Lowering patterns to MLIR (ODE op, log–pdf ops, event handling).
   - Considerations for batched simulation and GPU execution.
+
+---
+
+## 5. Structural Model Patterns
+
+This section defines **canonical structural patterns** for Track D models:
+
+- classical PK compartment models,
+- standard PD models,
+- indirect response / turnover structures,
+- extensible QSP skeletons.
+
+The goal is not to constrain MedLang to these forms, but to:
+
+1. Provide **reference patterns** and naming conventions,
+2. Ensure that library templates and examples are **consistent and type‑safe**,
+3. Facilitate **interoperability** with NONMEM/Monolix/Stan/Torsten formulations.
+
+All patterns here assume the **typing and unit semantics** of Section 4.
+
+### 5.1. Design Principles and Naming Conventions
+
+Across Track D examples and libraries we adopt:
+
+- **Parameter names:**
+  - `CL` – clearance (Volume/Time),
+  - `Q` – inter-compartmental clearance (Volume/Time),
+  - `V`, `Vc`, `Vp` – volumes (Volume),
+  - `Ka` – first-order absorption rate (1/Time),
+  - `Ke`, `Kout`, `Kin` – elimination/turnover rates (1/Time),
+  - `Emax`, `EC50`, `γ` – PD parameters (effect scale, potency, Hill coefficient).
+
+- **States:**
+  - `A_gut`, `A_central`, `A_periph` – amounts (Mass or Amount of Substance),
+  - `C_plasma`, `C_effect` – concentrations (Mass/Volume) or dimensionless,
+  - `R`, `Biomarker`, `Tumour` – PD/QSP states with domain‑specific units.
+
+- **Observables:**
+  - `C_plasma` – canonical plasma concentration observable,
+  - `Effect` – dimensionless or unit‑specific PD effect,
+  - `Biomarker_X` – explicitly named biomarkers.
+
+These conventions are **non‑binding** at the language level but strongly recommended for clarity and alignment with pharmacometric practice.
+
+---
+
+### 5.2. One‑Compartment PK Models
+
+#### 5.2.1. IV Bolus
+
+**Mathematical structure**
+
+Single compartment, amount state A_c(t):
+
+```
+dA_c/dt = -(CL/V) * A_c
+```
+
+with:
+- A_c [Mass],
+- CL [Volume/Time],
+- V [Volume],
+- concentration observable:
+  ```
+  C_plasma(t) = A_c(t) / V   [Mass/Volume]
+  ```
+
+**Pseudo‑MedLang**
+
+```medlang
+model OneCompIV {
+    // States
+    state A_central : DoseMass    // mg
+
+    // Parameters
+    param CL : Clearance          // L/h
+    param V  : Volume             // L
+
+    // Structural ODE
+    dA_central/dt = -(CL / V) * A_central
+
+    // Observables
+    obs C_plasma : ConcMass = A_central / V
+}
+```
+
+A bolus dose is represented as a `Timeline` event adding to `A_central` at a specific time.
+
+```medlang
+timeline OneCompIV_Timeline {
+    at 0.0_h:
+        dose {
+            amount = 100.0_mg
+            to     OneCompIV.A_central
+        }
+}
+```
+
+#### 5.2.2. IV Infusion
+
+Now we introduce a constant infusion rate R_in [Mass/Time]:
+
+```
+dA_c/dt = R_in - (CL/V) * A_c
+```
+
+**Pseudo‑MedLang**
+
+```medlang
+model OneCompIVInfusion {
+    state A_central : DoseMass       // mg
+    param CL        : Clearance      // L/h
+    param V         : Volume         // L
+
+    input R_in      : FlowMass       // mg/h (from Timeline)
+
+    dA_central/dt = R_in - (CL / V) * A_central
+
+    obs C_plasma : ConcMass = A_central / V
+}
+```
+
+`R_in` is bound from `Timeline` infusion events:
+
+```medlang
+timeline OneCompIVInfusion_Timeline {
+    at 0.0_h:
+        start_infusion {
+            rate   = 10.0_mg_per_h
+            target = OneCompIVInfusion.A_central
+        }
+
+    at 8.0_h:
+        stop_infusion {
+            target = OneCompIVInfusion.A_central
+        }
+}
+```
+
+Semantics: between `start_infusion` and `stop_infusion`, `R_in` is constant; outside, `R_in = 0`.
+
+#### 5.2.3. Oral First‑Order Absorption
+
+Two amounts:
+- A_g(t) – amount in gut,
+- A_c(t) – amount in central compartment.
+
+Equations:
+
+```
+dA_g/dt = -Ka * A_g
+dA_c/dt = Ka * A_g - (CL/V) * A_c
+```
+
+**Pseudo‑MedLang**
+
+```medlang
+model OneCompOral {
+    // States
+    state A_gut     : DoseMass      // mg
+    state A_central : DoseMass      // mg
+
+    // Parameters
+    param Ka : RateConst            // 1/h
+    param CL : Clearance            // L/h
+    param V  : Volume               // L
+
+    // Structural dynamics
+    dA_gut/dt     = -Ka * A_gut
+    dA_central/dt =  Ka * A_gut - (CL / V) * A_central
+
+    // Observable
+    obs C_plasma : ConcMass = A_central / V
+}
+```
+
+Oral dosing is modeled as bolus additions to `A_gut`:
+
+```medlang
+timeline OneCompOral_Timeline {
+    at 0.0_h:
+        dose {
+            route  = Oral
+            amount = 100.0_mg
+            to     OneCompOral.A_gut
+        }
+}
+```
+
+---
+
+### 5.3. Two‑Compartment PK Models
+
+Two‑compartment models consist of:
+- central compartment A_c(t),
+- peripheral compartment A_p(t),
+- elimination from the central compartment,
+- distribution clearance (Q) between compartments.
+
+Equations:
+
+```
+dA_c/dt = -(CL/V_c) * A_c - (Q/V_c) * A_c + (Q/V_p) * A_p + input(t)
+dA_p/dt = (Q/V_c) * A_c - (Q/V_p) * A_p
+```
+
+with:
+- A_c, A_p [Mass],
+- V_c, V_p [Volume],
+- CL, Q [Volume/Time].
+
+**Pseudo‑MedLang**
+
+```medlang
+model TwoCompIV {
+    // States
+    state A_central   : DoseMass     // mg
+    state A_peripheral: DoseMass     // mg
+
+    // Parameters
+    param CL : Clearance             // L/h
+    param Q  : Clearance             // L/h    // inter-compartmental clearance
+    param Vc : Volume                // L
+    param Vp : Volume                // L
+
+    // Input rate to central (for infusion or other routes)
+    input R_in : FlowMass            // mg/h
+
+    // Structural dynamics
+    dA_central/dt    =
+        R_in
+        - (CL / Vc) * A_central
+        - (Q  / Vc) * A_central
+        + (Q  / Vp) * A_peripheral
+
+    dA_peripheral/dt =
+        (Q / Vc) * A_central
+        - (Q / Vp) * A_peripheral
+
+    // Observable
+    obs C_plasma : ConcMass = A_central / Vc
+}
+```
+
+Oral 2‑compartment variants are obtained by adding `A_gut` and a `Ka` term as in §5.2.3.
+
+---
+
+### 5.4. Saturable and Time‑Varying Clearance
+
+#### 5.4.1. Michaelis–Menten (Capacity‑Limited) Elimination
+
+In some contexts, elimination is better represented by a **Michaelis–Menten** process:
+
+```
+dA_c/dt = -(Vmax * C) / (Km + C)
+```
+
+where C = A_c / V, and:
+- Vmax [Mass/Time],
+- Km [Concentration].
+
+Rewriting in terms of A_c:
+
+```
+dA_c/dt = -(Vmax * (A_c/V)) / (Km + (A_c/V))
+```
+
+**Pseudo‑MedLang**
+
+```medlang
+model OneCompIV_MM {
+    state A_central : DoseMass          // mg
+
+    param Vmax : FlowMass               // mg/h
+    param Km   : ConcMass               // mg/L
+    param V    : Volume                 // L
+
+    obs C_plasma : ConcMass = A_central / V
+
+    dA_central/dt =
+        - Vmax * (C_plasma / (Km + C_plasma))
+}
+```
+
+Typing check:
+- `C_plasma / (Km + C_plasma)` is dimensionless,
+- `Vmax * (dimensionless)` → `Mass/Time`,
+- consistent with `dA_central/dt`.
+
+#### 5.4.2. Time‑Dependent Clearance
+
+Autoinduction or time‑varying clearance can be modeled by a dynamic `CL(t)`.
+
+Simple exponential change:
+
+```
+CL(t) = CL_0 * (1 + α * (1 - exp(-k_ind * t)))
+```
+
+with:
+- `CL_0 : Clearance`,
+- `α : Fraction`,
+- `k_ind : RateConst`.
+
+**Pseudo‑MedLang**
+
+```medlang
+model OneCompIV_TimeVaryingCL {
+    state A_central : DoseMass
+    param CL0       : Clearance
+    param alpha     : f64          // dimensionless
+    param k_ind     : RateConst    // 1/h
+    param V         : Volume
+
+    fn CL_t(t : Time) : Clearance {
+        return CL0 * (1.0 + alpha * (1.0 - exp(-k_ind * t)));
+    }
+
+    dA_central/dt = -(CL_t(t) / V) * A_central
+
+    obs C_plasma : ConcMass = A_central / V
+}
+```
+
+This pattern generalizes to any covariate‑driven or state‑driven time‑varying `CL`.
+
+---
+
+### 5.5. Direct‑Effect PD Models
+
+Direct‑effect models operate on a **driver** (usually drug concentration) and define an effect E(t) with no additional dynamics, or minimal dynamics.
+
+#### 5.5.1. Linear and Log‑Linear Models
+
+Linear:
+
+```
+E(t) = E_0 + S * C(t)
+```
+
+Log‑linear:
+
+```
+E(t) = E_0 + S * log(C(t) + ε)
+```
+
+with small ε to avoid log(0).
+
+**Pseudo‑MedLang**
+
+```medlang
+model DirectEffectLinear {
+    // PK driver provided externally or from another model
+    input C_driver : ConcMass         // e.g. plasma concentration
+
+    param E0 : EffectUnit             // baseline effect
+    param S  : EffectUnit_per_Conc    // slope
+
+    obs Effect : EffectUnit = E0 + S * C_driver
+}
+```
+
+Unit example:
+- `EffectUnit`: e.g. `mmHg`, `cells_per_uL`, or dimensionless,
+- `EffectUnit_per_Conc` = EffectUnit / ConcMass.
+
+#### 5.5.2. Emax and Sigmoid Emax
+
+Emax:
+
+```
+E(t) = E_0 + (Emax * C(t)) / (EC50 + C(t))
+```
+
+Sigmoid Emax:
+
+```
+E(t) = E_0 + (Emax * C(t)^γ) / (EC50^γ + C(t)^γ)
+```
+
+**Pseudo‑MedLang**
+
+```medlang
+model DirectEffectEmax {
+    input C_driver : ConcMass
+
+    param E0    : EffectUnit
+    param Emax  : EffectUnit
+    param EC50  : ConcMass
+    param gamma : f64            // dimensionless
+
+    fn E(C : ConcMass) : EffectUnit {
+        let num = Emax * pow(C, gamma)
+        let den = pow(EC50, gamma) + pow(C, gamma)
+        return E0 + num / den
+    }
+
+    obs Effect : EffectUnit = E(C_driver)
+}
+```
+
+Typing:
+- `pow(C, γ)` is only allowed after ensuring `C` is normalized to a dimensionless ratio (e.g. `C/EC50`), or via a library that handles this explicitly; the spec assumes the implementation enforces Section 4 rules on exponentiation of dimensionful quantities.
+
+---
+
+### 5.6. Indirect Response / Turnover Models
+
+Indirect response models represent turnover of a biomarker R(t) under stimulation/inhibition by drug.
+
+Baseline turnover:
+
+```
+dR/dt = K_in - K_out * R
+```
+
+Drug‑induced inhibition (e.g. of production):
+
+```
+dR/dt = K_in * (1 - I(C)) - K_out * R
+```
+
+with an inhibitory Emax:
+
+```
+I(C) = (Imax * C) / (IC50 + C)
+```
+
+**Pseudo‑MedLang**
+
+```medlang
+model IndirectResponseInhibition {
+    input C_driver : ConcMass       // drug concentration
+
+    // Biomarker state
+    state R : BiomarkerUnit
+
+    // Turnover parameters
+    param Kin  : Rate_Biomarker     // BiomarkerUnit/h
+    param Kout : RateConst          // 1/h
+
+    // Inhibition parameters
+    param Imax : f64                // dimensionless, in [0,1]
+    param IC50 : ConcMass
+
+    fn I(C : ConcMass) : f64 {
+        return (Imax * C) / (IC50 + C)
+    }
+
+    dR/dt = Kin * (1.0 - I(C_driver)) - Kout * R
+
+    obs Biomarker : BiomarkerUnit = R
+}
+```
+
+This pattern generalizes to:
+- stimulation of production (replace (1 - I(C)) with (1 + S(C))),
+- inhibition/stimulation of loss (`Kout` modulated instead of `Kin`).
+
+---
+
+### 5.7. Effect Compartment Models
+
+Effect compartment models introduce a **biophase delay** between plasma concentration and effect site concentration.
+
+Define:
+- Plasma concentration C_p(t),
+- Effect site concentration C_e(t).
+
+Dynamics:
+
+```
+dC_e/dt = Ke0 * (C_p(t) - C_e(t))
+```
+
+with PD driven by C_e(t) via any direct‑effect model (e.g. Emax).
+
+**Pseudo‑MedLang**
+
+```medlang
+model EffectCompartment {
+    input C_plasma : ConcMass
+
+    state C_effect : ConcMass
+    param Ke0      : RateConst     // 1/h
+
+    dC_effect/dt = Ke0 * (C_plasma - C_effect)
+
+    // PD layer (example: Emax)
+    param E0    : EffectUnit
+    param Emax  : EffectUnit
+    param EC50  : ConcMass
+    param gamma : f64
+
+    fn E(Ce : ConcMass) : EffectUnit {
+        let num = Emax * pow(Ce, gamma)
+        let den = pow(EC50, gamma) + pow(Ce, gamma)
+        return E0 + num / den
+    }
+
+    obs Effect : EffectUnit = E(C_effect)
+}
+```
+
+This model is typically **composed** with a PK model providing `C_plasma`.
+
+---
+
+### 5.8. QSP Skeleton Pattern
+
+Quantitative Systems Pharmacology often requires a **network of interacting species** (cells, cytokines, receptors) coupled to PK.
+
+Abstract form:
+
+```
+dX/dt = F(X(t), C(t), θ_QSP, t)
+```
+
+where:
+- X(t) – vector of biological states,
+- C(t) – drug exposure (concentration/amount) from a PK model,
+- θ_QSP – QSP parameters.
+
+**Pseudo‑MedLang skeleton**
+
+```medlang
+model QSP_Skeleton {
+    // PK driver (e.g. plasma concentration)
+    input C_plasma : ConcMass
+
+    // Biological states (examples)
+    state Tumour      : Quantity<mm3, f64>
+    state Effector    : CellCount           // cells
+    state Cytokine    : ConcMass           // mg/L or pg/mL
+
+    // Parameters (illustrative)
+    param k_grow   : RateConst
+    param k_kill   : RateConst
+    param k_prolif : RateConst
+    param k_death  : RateConst
+    param k_sec    : Rate_Cytokine
+    param k_clear  : RateConst
+
+    // Structural dynamics (illustrative forms)
+    dTumour/dt =
+        k_grow * Tumour * (1.0 - Tumour / Tumour_max)
+        - k_kill * Effector * Tumour * f_exposure(C_plasma)
+
+    dEffector/dt =
+        k_prolif * g(Cytokine) * Effector
+        - k_death * Effector
+
+    dCytokine/dt =
+        k_sec * Effector
+        - k_clear * Cytokine
+
+    // Observables
+    obs TumourVolume  : Quantity<mm3, f64> = Tumour
+    obs EffCellCount  : CellCount          = Effector
+    obs CytokineLevel : ConcMass           = Cytokine
+}
+```
+
+Functions `f_exposure` and `g` can be:
+- simple saturating functions of `C_plasma` and `Cytokine`,
+- or learned components (see Section 8, Hybrid Mechanistic–ML).
+
+This skeleton demonstrates:
+- how PK exposure enters QSP dynamics via `input`,
+- how QSP states map to observables for comparison with data.
+
+---
+
+### 5.9. Summary
+
+The structural patterns defined in this section serve as:
+
+- **reference implementations** for Track D libraries and examples,
+- **testbeds** for the type system and solver integration,
+- **anchors** for interoperability with legacy tools (by showing direct analogues to standard NONMEM/Monolix/Stan models).
+
+Subsequent sections (6–10) will build on these patterns to define:
+- formal NLME semantics,
+- inference modes and backend contracts,
+- hybrid ML extensions,
+- and complete worked examples ready for implementation and validation.
 
 ---
 
