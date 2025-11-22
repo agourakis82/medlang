@@ -316,7 +316,7 @@ The following sections are to be filled in subsequent iterations:
     - Standard PD models (Emax, indirect response).
   - Reusable MedLang templates and suggested naming conventions.
 
-- **6. Population and NLME Semantics**
+- **6. Population and NLME Semantics** ✓ (See below)
   - Formal treatment of random effects, covariates, and intra–individual variability.
   - Relation to NONMEM/Monolix/Stan abstractions.
   - Hierarchical model diagrams and their encoding in MedLang.
@@ -929,6 +929,422 @@ Subsequent sections (6–10) will build on these patterns to define:
 - inference modes and backend contracts,
 - hybrid ML extensions,
 - and complete worked examples ready for implementation and validation.
+
+---
+
+## 6. Population and NLME Semantics
+
+This section formalizes **population** and **nonlinear mixed–effects (NLME)** semantics in Track D and specifies how they are expressed using MedLang core constructs:
+
+- `Model` (structural dynamics),
+- `ProbKernel` (random effects, priors),
+- `Measure` (observation models),
+- `Timeline` (dosing/observation schedules),
+- `Patient` / `Cohort` (clinical indexing and covariates).
+
+The objective is to make **population PK/PD/QSP models** first‑class citizens in MedLang, with a clear generative interpretation that can be mapped to:
+
+- classical NLME engines (NONMEM, Monolix),
+- probabilistic programming tools (Stan, PyMC, NumPyro).
+
+### 6.1 Informal Overview
+
+A population model in Track D separates three levels:
+
+1. **Structural (individual) level**  
+   For a given parameter vector θᵢ and individual event history (doses, covariates, etc.), the `Model` defines a deterministic trajectory Xᵢ(t) and associated predictions ŷᵢⱼ.
+
+2. **Population (between‑subject variability) level**  
+   Individual parameters θᵢ are treated as random draws from a population distribution, typically parameterized by fixed effects φ and random effects distribution parameters (e.g. variances, covariances).
+
+3. **Observation (residual error) level**  
+   Observed data yᵢⱼ are generated from predictions ŷᵢⱼ via a residual error model (e.g. additive, proportional, combined), described by a `Measure`.
+
+NLME = **Nonlinear mixed–effects**:
+
+- "Nonlinear" because the structural model is usually nonlinear in parameters and states (ODEs).
+- "Mixed‑effects" because it combines fixed effects (population typical values, covariate effects) and random effects (inter‑individual / inter‑occasion deviations).
+
+Track D's semantics make this hierarchy explicit and machine‑checkable.
+
+---
+
+### 6.2 Formal Generative Model
+
+Consider a **cohort** of N individuals indexed by i ∈ {1,...,N}. For individual i:
+
+- Let zᵢ be a vector of covariates (e.g. weight, age, sex, genotype).
+- Let 𝒯ᵢ be the `Timeline` of dosing and observation events.
+- Let θᵢ be the individual parameter vector for the structural `Model`.
+- Let yᵢ = {yᵢⱼ}ⱼ₌₁ⁿⁱ be observed data.
+
+A generic Track D population model has the following generative process:
+
+1. **Population parameters**  
+   Population‑level parameters φ and error‑model parameters ψ are either:
+   - treated as **unknown but fixed** (frequentist NLME),
+   - or assigned **priors** and treated as random (Bayesian).
+
+2. **Individual parameters (random effects + covariates)**  
+   For each individual i,
+   ```
+   θᵢ ~ p(θ | zᵢ, φ)
+   ```
+   typically via:
+   ```
+   θᵢ = h(zᵢ, φ, ηᵢ),    ηᵢ ~ p(η | φ)
+   ```
+   where ηᵢ are random effects.
+
+3. **Structural dynamics**  
+   Given θᵢ and `Timeline` 𝒯ᵢ, the structural `Model` defines:
+   ```
+   Xᵢ(t) = solve_IVP(f(·; θᵢ), X₀,ᵢ, uᵢ(t), t)
+   ```
+   where uᵢ(t) encodes exogenous inputs (dosing) derived from 𝒯ᵢ.
+
+4. **Observation model**  
+   For each observation time tᵢⱼ and observation channel k:
+   ```
+   ŷᵢⱼ = hₖ(Xᵢ(tᵢⱼ), θᵢ)
+   yᵢⱼ ~ p(y | ŷᵢⱼ, ψ)
+   ```
+   where p is defined by a `Measure` (e.g. additive or proportional error).
+
+The **joint distribution** over all data and latent variables can be written as:
+
+```
+p({yᵢ}, {θᵢ}, φ, ψ) = p(φ, ψ) ∏ᵢ₌₁ᴺ [p(θᵢ | zᵢ, φ) ∏ⱼ₌₁ⁿⁱ p(yᵢⱼ | ŷᵢⱼ(θᵢ), ψ)]
+```
+
+with ŷᵢⱼ(θᵢ) implicitly defined via ODE solves.
+
+This factorization is the **semantic contract** that any inference backend must respect.
+
+---
+
+### 6.3 Covariate Models
+
+Covariate models specify how individual parameters θᵢ depend on individual covariates zᵢ and random effects ηᵢ.
+
+#### 6.3.1 Log‑normal parameterization with covariates
+
+A common parameterization for a parameter θᵢ⁽ᵏ⁾ (e.g. clearance) is:
+
+```
+θᵢ⁽ᵏ⁾ = θ_pop⁽ᵏ⁾ · g⁽ᵏ⁾(zᵢ; β⁽ᵏ⁾) · exp(ηᵢ⁽ᵏ⁾),    ηᵢ⁽ᵏ⁾ ~ N(0, ω²ₖ)
+```
+
+where:
+
+- θ_pop⁽ᵏ⁾ is a typical value at reference covariates,
+- g⁽ᵏ⁾(zᵢ; β⁽ᵏ⁾) is a dimensionless covariate function, e.g.:
+  - allometric scaling: g(zᵢ; β) = (WTᵢ / 70)^β,
+  - categorical covariates: binary or multi‑level factors.
+- ηᵢ⁽ᵏ⁾ is the random effect,
+- ω²ₖ is the variance of that effect.
+
+In MedLang, this is expressed by:
+
+- deterministic covariate mappings inside `Model` code,
+- `ProbKernel` describing the distribution of ηᵢ.
+
+**Pseudo‑MedLang sketch:**
+
+```medlang
+// Population-level parameters
+param CL_pop  : Quantity<L/h, f64>   // typical CL for 70 kg
+param beta_CL : f64                  // allometric exponent
+param omega_CL: f64                  // std dev of log-CL random effect (dimensionless)
+
+// Individual covariate and random effect
+input WT      : Quantity<kg, f64>    // body weight
+rand  eta_CL  : f64                  // from ProbKernel(0, omega_CL^2)
+
+// Covariate function (dimensionless)
+fn g_CL(WT : Quantity<kg, f64>) : f64 {
+    return pow(WT / 70.0_kg, beta_CL)
+}
+
+// Individual CL_i
+let CL_i : Quantity<L/h, f64> =
+    CL_pop * g_CL(WT) * exp(eta_CL)
+```
+
+Unit rules:
+
+- `g_CL` and `exp(eta_CL)` are dimensionless,
+- base unit `CL_pop` carries `Volume/Time`,
+- thus `CL_i` has the correct unit.
+
+#### 6.3.2 Other covariate structures
+
+Track D does not limit covariate models to multiplicative log‑normal forms. Other allowed patterns include:
+
+- **Additive covariate models:**
+  ```
+  θᵢ⁽ᵏ⁾ = θ_pop⁽ᵏ⁾ + β⁽ᵏ⁾ᵀ zᵢ + ηᵢ⁽ᵏ⁾
+  ```
+
+- **Categorical factors** (e.g. sex, genotype):
+  implemented via indicator functions or one‑hot encodings in `g`.
+
+- **Multi‑parameter covariate strength**:
+  correlated covariate effects across parameters are permitted by sharing covariates and random effects or by using multivariate `ProbKernel`s (see 6.4).
+
+MedLang imposes only **type/units correctness** and measurability requirements; statistical form is left to the modeller.
+
+---
+
+### 6.4 Random Effects Types and `ProbKernel` Structure
+
+Population variability is decomposed into:
+
+1. **Inter‑individual variability (IIV)**  
+   Differences between subjects:
+   ```
+   ηᵢ ~ N(0, Ω_IIV)
+   ```
+
+2. **Inter‑occasion variability (IOV)** (optional for v0.1)  
+   Differences between occasions (e.g. study periods) within the same subject:
+   ```
+   κᵢ,ₒ ~ N(0, Ω_IOV)
+   ```
+   contributing to θᵢ,ₒ.
+
+3. **Residual unexplained variability (RUV)**  
+   Captured at the observation level via `Measure`.
+
+Track D expresses IIV and IOV via **random‑effect variables** associated with `ProbKernel`s.
+
+#### 6.4.1 Inter‑individual variability (IIV)
+
+For a vector of random effects ηᵢ ∈ ℝᵍ,
+
+```
+ηᵢ ~ N(0, Ω)
+```
+
+with covariance matrix Ω ∈ ℝᵍˣᵍ.
+
+In MedLang:
+
+```medlang
+// Population hyperparameters
+param Omega : CovMatrix<q>   // covariance of random effects (dimensionless)
+
+// Random effects for individual i
+rand eta : Vector<q, f64> ~ MVNormal(mean = 0, cov = Omega)
+```
+
+Then, individual parameters are determined via a function h as in 6.3.
+
+`ProbKernel` encodes the mapping from hyperparameters to the distribution p(η | hyper). At compile time, backends must be able to:
+
+- evaluate log‑densities `log p(eta | Omega)`,
+- sample from the kernel if needed (simulation, Bayesian inference).
+
+#### 6.4.2 Inter‑occasion variability (IOV) (optional)
+
+If occasions (e.g. study periods, treatment cycles) are modelled, additional random effects κᵢ,ₒ can be included:
+
+```
+θᵢ,ₒ = h(zᵢ, φ, ηᵢ, κᵢ,ₒ)
+```
+
+with their own `ProbKernel`. v0.1 of the spec **acknowledges** this pattern but does not mandate a specific syntax; implementations MAY support it as an extension.
+
+#### 6.4.3 Random‑effect units
+
+As per Section 4:
+
+- In **log‑normal parameterizations**, random effects are dimensionless; units live entirely in the base parameter.
+- In **additive parameterizations**, random effects must have the same unit as the parameter.
+
+`ProbKernel` typing enforces these choices.
+
+---
+
+### 6.5 Observation-Level Noise (RUV) and `Measure`
+
+Residual unexplained variability (RUV) is modeled via `Measure` objects.
+
+Canonical forms:
+
+1. **Additive error:**
+   ```
+   yᵢⱼ = ŷᵢⱼ + εᵢⱼ,    εᵢⱼ ~ N(0, σ²_add)
+   ```
+
+2. **Proportional error:**
+   ```
+   yᵢⱼ = ŷᵢⱼ(1 + εᵢⱼ),    εᵢⱼ ~ N(0, σ²_prop)
+   ```
+
+3. **Combined error:**
+   ```
+   yᵢⱼ = ŷᵢⱼ(1 + ε₁,ᵢⱼ) + ε₂,ᵢⱼ
+   ```
+
+4. **Other structures:**  
+   heteroscedasticity, log‑normal error on positive quantities, censored data, etc.
+
+**MedLang sketch (proportional error):**
+
+```medlang
+// Hyperparameters for RUV
+param sigma_prop : f64   // dimensionless SD
+
+measure ConcObs {
+    pred : Quantity<mg/L, f64>   // model prediction ŷᵢⱼ
+    obs  : Quantity<mg/L, f64>   // observed data yᵢⱼ
+
+    // Noise model: y = pred * (1 + eps)
+    rand eps : f64 ~ Normal(mean = 0.0, sd = sigma_prop)
+
+    log_likelihood = Normal_logpdf(
+        x   = obs / pred - 1.0,
+        mu  = 0.0,
+        sd  = sigma_prop
+    )
+}
+```
+
+The key requirement is that every `Measure` can expose a **log‑likelihood contribution** for each data point, with unit correctness guaranteed by construction.
+
+---
+
+### 6.6 Mapping to MedLang Core Constructs
+
+A complete NLME model in Track D is represented as a composition of:
+
+- **Structural `Model`**
+  - States and parameters,
+  - ODE/PDE definitions,
+  - observable definitions.
+
+- **Random‑effects `ProbKernel`s**
+  - For inter‑individual (and optional inter‑occasion) variability,
+  - Potentially multivariate, with covariance structures.
+
+- **Observation `Measure`s**
+  - Error models linking predictions to data.
+
+- **`Timeline`s**
+  - Dosing and observation schedules per individual.
+
+- **`Cohort<Patient, L, d>`**
+  - Collection of patients, each with:
+    - covariates,
+    - timeline,
+    - measurement records.
+
+Conceptually, one can introduce a **population model combinator**:
+
+```medlang
+population PopModel {
+    model     : Model<State, Param>
+    re_kernel : ProbKernel<Unit, RandomEffects>   // IIV (and optionally IOV)
+    obs_model : Measure<Observable>               // RUV
+
+    cohort    : Cohort<Patient, ..., ...>         // individuals and data
+}
+```
+
+The spec does not mandate a concrete surface syntax for this combinator yet, but:
+
+- an implementation MUST offer an abstraction that bundles these pieces,
+- inference engines MUST be able to consume this bundle as a unified model.
+
+---
+
+### 6.7 Relation to NONMEM, Monolix, and Stan/Torsten
+
+The Track D semantics are designed so that classical NLME abstractions are **special cases** of the MedLang formulation.
+
+#### 6.7.1 NONMEM mapping
+
+- `Model` (structural ODE + covariates) ↔ `$DES` + `$PK` blocks.
+- `ProbKernel` for IIV ↔ `OMEGA` definition and associated `ETA`s.
+- `Measure` (RUV) ↔ `$ERROR` with `SIGMA` matrices and `EPS` variables.
+- `Timeline` ↔ `$INPUT` / event records (AMT, TIME, RATE, etc.).
+- `Cohort` ↔ data file (rows with ID, TIME, DV, etc.).
+
+A simple one‑compartment oral NLME model in NONMEM:
+
+- `$PK` defines `TVCL`, `TVV`, covariate effects, and parameterization from `ETA`.
+- `$DES` encodes ODEs for `A_gut`, `A_c`.
+- `$ERROR` encodes proportional residual error.
+
+In MedLang, these are unified under the constructs defined above; exporting to NONMEM is largely a matter of syntax translation and choice of approximations (e.g., log‑normal vs normal random effects, censoring conventions).
+
+#### 6.7.2 Monolix mapping
+
+Monolix `.mlxtran` models:
+
+- `DEFI` / `EQUATION` blocks ↔ `Model` ODEs and observation maps,
+- `DEFINITION:` sections for parameters / random effects ↔ `ProbKernel` definitions,
+- `OBSERVATION:` ↔ `Measure`.
+
+The high‑level structure is analogous to NONMEM; MedLang's explicit generative semantics match the stochastic language underlying Monolix.
+
+#### 6.7.3 Stan / Torsten mapping
+
+In a Stan/Torsten formulation:
+
+- `Model` ODEs ↔ Stan `functions` block ODE system or Torsten ODE/PBPK solvers,
+- random effects ↔ hierarchical parameters in Stan `parameters` / `model` blocks,
+- `Measure` ↔ Stan likelihood statements (`y ~ normal(...)` etc.),
+- `Timeline` ↔ dosing/observation records consumed by Torsten solvers,
+- priors ↔ `ProbKernel` with logpdf calls.
+
+A MedLang population model can conceptually be **compiled into** a Stan/Torsten model by:
+
+1. Generating Stan data definitions from `Cohort` and `Timeline`.
+2. Generating parameter blocks from `Param` and random effects definitions.
+3. Generating ODE solver calls for `Model`.
+4. Generating likelihood statements from `Measure` (and priors from `ProbKernel`).
+
+This mapping is not specified in detail here but guides the design of the MedLang IR and backend contracts (Section 7).
+
+---
+
+### 6.8 Frequentist vs Bayesian Modes
+
+Track D defines the **model semantics** independently of the estimation paradigm.
+
+- In **frequentist NLME mode**:
+  - φ, ψ, and possibly Ω are estimated as fixed but unknown parameters.
+  - Random effects ηᵢ are latent variables integrated out (or approximated) in the likelihood.
+  - `ProbKernel` is used both to specify the distribution of ηᵢ and to compute the likelihood contributions p(ηᵢ | φ).
+
+- In **Bayesian mode**:
+  - Priors are assigned to φ, ψ, Ω via additional `ProbKernel`s.
+  - Inference produces posterior distributions over all unknowns, enabling full uncertainty quantification.
+  - Posterior predictive checks are naturally expressible by sampling from the posterior and simulating via `Model` + `Timeline` + `Measure`.
+
+Implementations MAY support one or both modes; the spec requires that:
+
+- all components needed for both (likelihoods, priors, structural model) are explicitly represented,
+- switching between modes does not require changing the high‑level model definition, only the **inference configuration**.
+
+---
+
+### 6.9 Summary
+
+Section 6 establishes:
+
+- a **hierarchical generative semantics** for population PK/PD/QSP models,
+- a consistent use of `Model`, `ProbKernel`, `Measure`, `Timeline`, and `Cohort` to encode NLME structures,
+- compatibility with existing tools (NONMEM, Monolix, Stan/Torsten),
+- and flexibility for both frequentist and Bayesian inference.
+
+This foundation enables:
+
+- rigorous **population–level simulation** and virtual trials,
+- integration of quantum‑derived parameters (Track C) into population models,
+- and the introduction of hybrid mechanistic–ML models in Section 8 without breaking probabilistic coherence.
 
 ---
 
