@@ -1,0 +1,185 @@
+// MedLang Canonical Example: One-Compartment Oral PK with NLME
+//
+// This is the reference implementation for Vertical Slice 0.
+// Demonstrates:
+// - Structural model (states, parameters, ODEs, observables)
+// - Population model (fixed effects, random effects, covariate)
+// - Observation model (proportional error)
+// - Timeline (dosing and observations)
+// - Cohort (ties everything together)
+
+// =============================================================================
+// Structural Model: One-Compartment Oral PK
+// =============================================================================
+
+model OneCompOral {
+    // States: amount of drug in each compartment [Mass]
+    state A_gut     : DoseMass
+    state A_central : DoseMass
+
+    // Individual-level parameters
+    param Ka : RateConst      // Absorption rate constant [1/h]
+    param CL : Clearance      // Clearance [L/h]
+    param V  : Volume         // Volume of distribution [L]
+
+    // Dynamics: ordinary differential equations
+    // dA_gut/dt has units [Mass/Time] = [Mass] * [1/Time] ✓
+    dA_gut/dt     = -Ka * A_gut
+
+    // dA_central/dt has units [Mass/Time]
+    //   = [1/Time] * [Mass] - ([Volume/Time] / [Volume]) * [Mass]
+    //   = [Mass/Time] - [1/Time] * [Mass]
+    //   = [Mass/Time] ✓
+    dA_central/dt =  Ka * A_gut - (CL / V) * A_central
+
+    // Observable: plasma concentration [Mass/Volume]
+    // C_plasma = [Mass] / [Volume] = [ConcMass] ✓
+    obs C_plasma : ConcMass = A_central / V
+}
+
+// =============================================================================
+// Observation Model: Proportional Error
+// =============================================================================
+
+measure ConcPropError {
+    // Predicted concentration from model
+    pred : ConcMass
+
+    // Observed concentration from data
+    obs  : ConcMass
+
+    // Residual error parameter (proportional SD, dimensionless)
+    param sigma_prop : f64
+
+    // Log-likelihood: proportional error model
+    // Residual = (Observed / Predicted) - 1 is dimensionless ✓
+    // Normal(0, sigma_prop) requires dimensionless arguments ✓
+    log_likelihood = Normal_logpdf(
+        x  = (obs / pred) - 1.0,
+        mu = 0.0,
+        sd = sigma_prop
+    )
+}
+
+// =============================================================================
+// Population Model: NLME with Covariate
+// =============================================================================
+
+population OneCompOralPop {
+    // Reference to structural model
+    model OneCompOral
+
+    // Population-level fixed effects parameters
+    param CL_pop  : Clearance    // Typical clearance at 70 kg
+    param V_pop   : Volume       // Typical volume at 70 kg
+    param Ka_pop  : RateConst    // Typical absorption rate
+
+    // Population-level covariate coefficients (dimensionless)
+    // Defaults if not in Track D spec: beta_CL and beta_V could be params too
+    // For V0, we'll use fixed allometric exponents in bind_params
+
+    // Inter-individual variability (IIV) parameters
+    // Standard deviations of random effects (dimensionless)
+    param omega_CL : f64
+    param omega_V  : f64
+    param omega_Ka : f64
+
+    // Covariate: body weight [kg]
+    input WT : Quantity<kg, f64>
+
+    // Random effects: individual deviations from population (log-scale)
+    // eta_CL, eta_V, eta_Ka are dimensionless
+    rand eta_CL : f64 ~ Normal(0.0, omega_CL)
+    rand eta_V  : f64 ~ Normal(0.0, omega_V)
+    rand eta_Ka : f64 ~ Normal(0.0, omega_Ka)
+
+    // Individual parameter mapping: (population params, covariates, eta) → individual params
+    bind_params(patient) {
+        // Normalized weight (dimensionless)
+        // patient.WT has units [kg]
+        // 70.0_kg has units [kg]
+        // Division yields dimensionless ratio ✓
+        let w = patient.WT / 70.0_kg
+
+        // Clearance: allometric scaling with exponent 0.75
+        // CL_pop has units [Volume/Time]
+        // pow(w, 0.75) is dimensionless
+        // exp(eta_CL) is dimensionless
+        // Product preserves units: [Volume/Time] ✓
+        model.CL = CL_pop * pow(w, 0.75) * exp(eta_CL)
+
+        // Volume: allometric scaling with exponent 1.0
+        // V_pop has units [Volume]
+        // w is dimensionless
+        // exp(eta_V) is dimensionless
+        // Product preserves units: [Volume] ✓
+        model.V  = V_pop * w * exp(eta_V)
+
+        // Absorption rate: no covariate effect
+        // Ka_pop has units [1/Time]
+        // exp(eta_Ka) is dimensionless
+        // Product preserves units: [1/Time] ✓
+        model.Ka = Ka_pop * exp(eta_Ka)
+    }
+
+    // Bind the observation model to the observable
+    use_measure ConcPropError for model.C_plasma
+}
+
+// =============================================================================
+// Timeline: Dosing and Observations
+// =============================================================================
+
+timeline OneCompOralTimeline {
+    // Dose event at time 0
+    // 100.0_mg has units [Mass]
+    // OneCompOral.A_gut has type DoseMass (alias for Mass)
+    // Match ✓
+    at 0.0_h:
+        dose {
+            amount = 100.0_mg
+            to = OneCompOral.A_gut
+        }
+
+    // Observation events: measure C_plasma at these times
+    // Times have units [Time] ✓
+    at 1.0_h:  observe OneCompOral.C_plasma
+    at 2.0_h:  observe OneCompOral.C_plasma
+    at 4.0_h:  observe OneCompOral.C_plasma
+    at 8.0_h:  observe OneCompOral.C_plasma
+    at 12.0_h: observe OneCompOral.C_plasma
+    at 24.0_h: observe OneCompOral.C_plasma
+}
+
+// =============================================================================
+// Cohort: Complete Model Specification
+// =============================================================================
+
+cohort OneCompCohort {
+    population OneCompOralPop
+    timeline   OneCompOralTimeline
+    data_file  "data/onecomp_synth.csv"
+}
+
+// =============================================================================
+// Expected Data File Format (onecomp_synth.csv)
+// =============================================================================
+//
+// CSV columns:
+//   ID    : Subject identifier (integer, 1-indexed)
+//   TIME  : Time since first dose (hours, float)
+//   DV    : Observed concentration (mg/L, float, or NA for dose rows)
+//   WT    : Body weight (kg, float)
+//   EVID  : Event ID (0 = observation, 1 = dose)
+//   AMT   : Dose amount (mg, float, or NA for observation rows)
+//
+// Example rows:
+//   ID,TIME,DV,WT,EVID,AMT
+//   1,0.0,NA,70.0,1,100.0
+//   1,1.0,4.2,70.0,0,NA
+//   1,2.0,3.8,70.0,0,NA
+//   ...
+//
+// This format matches NONMEM conventions for interoperability.
+//
+// =============================================================================

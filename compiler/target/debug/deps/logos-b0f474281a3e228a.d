@@ -1,0 +1,10 @@
+/Users/demetriosagourakis/Library/Mobile Documents/com~apple~CloudDocs/Medlang/compiler/target/debug/deps/logos-b0f474281a3e228a.d: /Users/demetriosagourakis/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/logos-0.13.0/src/lib.rs /Users/demetriosagourakis/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/logos-0.13.0/src/lexer.rs /Users/demetriosagourakis/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/logos-0.13.0/src/source.rs /Users/demetriosagourakis/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/logos-0.13.0/src/internal.rs
+
+/Users/demetriosagourakis/Library/Mobile Documents/com~apple~CloudDocs/Medlang/compiler/target/debug/deps/liblogos-b0f474281a3e228a.rlib: /Users/demetriosagourakis/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/logos-0.13.0/src/lib.rs /Users/demetriosagourakis/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/logos-0.13.0/src/lexer.rs /Users/demetriosagourakis/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/logos-0.13.0/src/source.rs /Users/demetriosagourakis/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/logos-0.13.0/src/internal.rs
+
+/Users/demetriosagourakis/Library/Mobile Documents/com~apple~CloudDocs/Medlang/compiler/target/debug/deps/liblogos-b0f474281a3e228a.rmeta: /Users/demetriosagourakis/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/logos-0.13.0/src/lib.rs /Users/demetriosagourakis/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/logos-0.13.0/src/lexer.rs /Users/demetriosagourakis/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/logos-0.13.0/src/source.rs /Users/demetriosagourakis/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/logos-0.13.0/src/internal.rs
+
+/Users/demetriosagourakis/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/logos-0.13.0/src/lib.rs:
+/Users/demetriosagourakis/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/logos-0.13.0/src/lexer.rs:
+/Users/demetriosagourakis/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/logos-0.13.0/src/source.rs:
+/Users/demetriosagourakis/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/logos-0.13.0/src/internal.rs:

@@ -1,0 +1,29 @@
+[package]
+name = "medlangc"
+version = "0.1.0"
+edition = "2021"
+authors = ["MedLang Contributors"]
+description = "MedLang compiler for computational medicine"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# Parsing
+nom = "7.1"
+logos = "0.13"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# CLI
+clap = { version = "4.4", features = ["derive"] }
+
+# Testing utilities
+pretty_assertions = "1.4"
+
+[dev-dependencies]
+criterion = "0.5"

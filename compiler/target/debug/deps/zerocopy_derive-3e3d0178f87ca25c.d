@@ -1,0 +1,8 @@
+/Users/demetriosagourakis/Library/Mobile Documents/com~apple~CloudDocs/Medlang/compiler/target/debug/deps/zerocopy_derive-3e3d0178f87ca25c.d: /Users/demetriosagourakis/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerocopy-derive-0.8.28/src/lib.rs /Users/demetriosagourakis/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerocopy-derive-0.8.28/src/enum.rs /Users/demetriosagourakis/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerocopy-derive-0.8.28/src/ext.rs /Users/demetriosagourakis/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerocopy-derive-0.8.28/src/repr.rs
+
+/Users/demetriosagourakis/Library/Mobile Documents/com~apple~CloudDocs/Medlang/compiler/target/debug/deps/libzerocopy_derive-3e3d0178f87ca25c.dylib: /Users/demetriosagourakis/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerocopy-derive-0.8.28/src/lib.rs /Users/demetriosagourakis/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerocopy-derive-0.8.28/src/enum.rs /Users/demetriosagourakis/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerocopy-derive-0.8.28/src/ext.rs /Users/demetriosagourakis/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerocopy-derive-0.8.28/src/repr.rs
+
+/Users/demetriosagourakis/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerocopy-derive-0.8.28/src/lib.rs:
+/Users/demetriosagourakis/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerocopy-derive-0.8.28/src/enum.rs:
+/Users/demetriosagourakis/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerocopy-derive-0.8.28/src/ext.rs:
+/Users/demetriosagourakis/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zerocopy-derive-0.8.28/src/repr.rs:
