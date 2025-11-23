@@ -339,67 +339,232 @@ All stress tests pass conceptually. No semantic contradictions or unit inconsist
 
 ---
 
-## Next Steps
+## Implementation Roadmap
 
-### Immediate (Spec Refinement)
+### Phase 0: Specification Completion ✅ COMPLETE
 
-1. **Add Section 4 to Track D** — Formal typing and unit semantics
-   - Type rules for ODE right-hand sides
-   - Unit inference algorithm
-   - Dimensional analysis examples
+**Status:** ✅ **DONE** (as of January 2025)
 
-2. **Formalize Population Syntax** — Clean up `population` construct
-   - Standard form for random effects declaration
-   - Parameter transformation DSL
-   - Observation model binding
+**Deliverables:**
+- ✅ Track C (Quantum Pharmacology) v0.1 — 9 sections
+- ✅ Track D (Pharmacometrics/QSP) v0.1 — 11 sections (added Track C ↔ Track D bridge)
+- ✅ Three comprehensive stress tests validating design
+- ✅ Implementation guides for V0 and V1
 
-3. **Add Example 2 to Track D** — QSP model with multiple compartments
-   - Tumor-immune-drug triad from stress test 2
-   - Demonstrate ML integration patterns
+**Documentation Created:**
+- `docs/PROMPT_V0_BASIC_COMPILER.md` — Detailed V0 implementation guide
+- `docs/PROMPT_V1_POPULATION_INFERENCE.md` — V1 enhancement guide
+- `docs/IMPLEMENTATION_GUIDE_V0.md` — Original detailed specification
+- All worked examples and stress tests
 
-4. **Add Example 3 to Track D** — PBPK with quantum parameters
-   - Full stress test 3 as worked example
-   - Track C → Track D data flow walkthrough
+---
 
-### Medium-Term (Implementation)
+### Phase 1: Vertical Slice 0 (MVP-0) 🎯 NEXT
 
-1. **Prototype Compiler (Track D Subset)**
-   - Parser for MedLang surface syntax
-   - Type checker with unit inference
-   - CIR construction
-   - Export to Stan (initial backend)
+**Goal:** Minimal viable MedLang-D compiler for 1-compartment oral PK with NLME
 
-2. **Reference Runtime**
-   - ODE solvers (CVODE, LSODA wrappers)
-   - Probability distributions (via existing libraries)
-   - Timeline event handling
+**Timeline:** 4-5 weeks full-time
 
-3. **Validation Suite**
-   - Implement all worked examples
-   - Cross-validate against NONMEM, Stan
-   - Synthetic data parameter recovery tests
+**Scope:**
+- ✅ Domain-specific syntax for pharmacometric models
+- ✅ Unit-safe type system with compile-time dimensional analysis
+- ✅ IR-based compilation (AST → CIR → Backend)
+- ✅ Executable backend (Stan/Torsten OR Julia)
+- ✅ End-to-end validation (simulation + log-likelihood)
 
-### Long-Term (Full System)
+**Implementation Steps:**
+
+1. **Week 1: Grammar + Parser**
+   - Define minimal MedLang grammar (EBNF)
+   - Create canonical example: `one_comp_oral_pk.medlang`
+   - Generate synthetic dataset (10-20 subjects)
+   - Implement AST definitions
+   - Build parser (recursive descent or combinator)
+   - 10+ parser unit tests
+
+2. **Week 2: Type System + IR**
+   - Implement unit type system (Mass, Volume, Time, derived units)
+   - Build type checker with dimensional analysis
+   - 20+ type checking tests
+   - Define CIR structures
+   - Implement AST → CIR lowering
+   - CIR serialization (JSON)
+
+3. **Week 3-4: Backend Codegen**
+   - Choose ONE backend: Stan OR Julia
+   - Implement code generation (ODE, parameters, likelihood)
+   - Validate generated code compiles
+   - Basic simulation tests
+
+4. **Week 4: CLI + Integration**
+   - Create CLI tool (`medlangc compile`)
+   - Full pipeline: parse → typecheck → IR → codegen
+   - Integration tests
+
+5. **Week 5: Validation**
+   - Numerical validation (< 1e-6 simulation error)
+   - Log-likelihood validation (< 1e-10 error)
+   - Complete documentation
+
+**Success Criteria:**
+- ✅ Canonical example parses and type-checks
+- ✅ Generated code compiles and runs
+- ✅ Simulation matches analytic solution
+- ✅ All tests pass (>80% coverage)
+- ✅ Documentation complete
+
+**Reference:** See `docs/PROMPT_V0_BASIC_COMPILER.md` for complete implementation guide
+
+---
+
+### Phase 2: Vertical Slice 1 (Population Inference)
+
+**Goal:** Real population inference engine with Stan/Turing backend
+
+**Timeline:** 2-3 weeks (after V0 complete)
+
+**Prerequisites:** V0 must be complete and validated
+
+**Enhancements:**
+
+1. **Explicit Random Effects Structure**
+   - Upgrade from simplified diagonal IIV to full MVNormal
+   - Cholesky parameterization for covariance (LKJ prior)
+   - Extend CIR to represent population structure
+
+2. **Probabilistic Backend**
+   - Generate complete Stan/Turing models
+   - Full Bayesian inference (HMC/NUTS)
+   - MCMC diagnostics (R-hat, ESS)
+
+3. **Inference CLI**
+   ```bash
+   medlangc infer model.medlang \
+       --data data.csv \
+       --backend stan \
+       --chains 4 --iter 2000
+   ```
+
+4. **Validation**
+   - MCMC convergence on synthetic data
+   - Posterior recovery of true parameters
+   - Integration tests
+
+**Success Criteria:**
+- ✅ Full MVNormal random effects with covariance
+- ✅ MCMC runs end-to-end (R-hat < 1.1, ESS > 100)
+- ✅ Posterior means recover true parameters (within 20%)
+- ✅ All tests pass
+
+**Reference:** See `docs/PROMPT_V1_POPULATION_INFERENCE.md` for complete implementation guide
+
+---
+
+### Phase 3: Vertical Slice 2 (QSP Integration)
+
+**Goal:** Add tumor-immune QSP module with ML hybrid
+
+**Timeline:** 3-4 weeks
+
+**Scope:**
+- Multi-state QSP (tumor, drug, immune cells)
+- ML-predicted dynamics (Neural ODEs)
+- Multi-scale coupling (PBPK ↔ QSP)
+- Unit safety for ML components
+
+**Key Features:**
+- Hybrid mechanistic-ML models (Section 8 of Track D)
+- Parameter-level ML (ML predicts CL, Kp)
+- Dynamics-level ML (Universal DEs)
+- PINN training integration
+
+---
+
+### Phase 4: Vertical Slice 3 (Quantum Integration)
+
+**Goal:** Full Track C → Track D quantum-to-clinical vertical
+
+**Timeline:** 4-5 weeks
+
+**Scope:**
+- Load quantum-derived parameters from JSON
+- Map ΔG_bind → Kd → EC50
+- Map ΔG_partition → Kp
+- Bayesian calibration of QM predictions
+- Full stress test 3 implementation
+
+**Key Features:**
+- Track C operator interface (initially load from JSON)
+- Quantum → classical parameter mappings
+- Calibration factors (alpha_EC50, alpha_Kp)
+- Uncertainty propagation from QM to clinical
+
+---
+
+### Phase 5: Production System
+
+**Timeline:** 6-12 months
+
+**Components:**
 
 1. **Complete Track C Implementation**
    - Interface to Psi4, ORCA, Gaussian
    - Caching and provenance tracking
-   - ML surrogate training infrastructure
+   - ML surrogate training
 
 2. **MLIR Backend**
    - Lower NIR to MLIR dialects
    - GPU code generation (CUDA, ROCm)
-   - Automatic differentiation via MLIR
+   - Automatic differentiation
 
 3. **Beagle Stack Integration**
    - Hardware acceleration (CPU, GPU, TPU, quantum)
-   - Distributed execution for virtual trials
+   - Distributed execution
    - Cloud deployment
 
 4. **Additional Tracks**
    - Track A: FHIR/CQL integration
    - Track B: Medical imaging (DICOM, spatial PDEs)
    - Track E: Systems biology (gene networks, metabolism)
+
+---
+
+## Quick Start: Begin V0 Implementation
+
+**Ready to start building?** Follow these steps:
+
+1. **Read the specifications:**
+   - `docs/medlang_core_spec_v0.1.md`
+   - `docs/medlang_pharmacometrics_qsp_spec_v0.1.md`
+   - `docs/PROMPT_V0_BASIC_COMPILER.md` ⭐ **START HERE**
+
+2. **Set up repository structure:**
+   ```bash
+   cd medlang
+   mkdir -p compiler/src/{ast,parser,types,ir,backend}
+   mkdir -p compiler/tests
+   mkdir -p docs/examples
+   ```
+
+3. **Start with Week 1 (Grammar + Parser):**
+   - Create `docs/medlang_d_minimal_grammar_v0.md`
+   - Write `docs/examples/one_comp_oral_pk.medlang`
+   - Generate `docs/examples/onecomp_synth.csv`
+
+4. **Build incrementally following the 5-week plan**
+
+**Current Status:** Specifications complete, ready for V0 implementation 🚀
+
+---
+
+## Deferred Spec Refinements (Post-V0)
+
+These spec improvements are identified but deferred until after V0 implementation:
+
+1. **Add Section 4 to Track D** — Formal typing and unit semantics
+2. **Formalize Population Syntax** — Clean up `population` construct
+3. **Add Example 2 to Track D** — QSP model with ML integration
+4. **Add Example 3 to Track D** — PBPK with quantum parameters (stress test 3 as worked example)
 
 ---
 
