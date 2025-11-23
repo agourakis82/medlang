@@ -5,3 +5,4 @@
 
 pub mod ast;
 pub mod datagen;
+pub mod lexer;
