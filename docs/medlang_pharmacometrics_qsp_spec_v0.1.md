@@ -3313,4 +3313,255 @@ This establishes Track D as:
 
 ---
 
-*This completes the initial draft of the MedLang Pharmacometrics & QSP Specification v0.1. All outlined sections (1–10) are now filled. Future iterations will refine formal semantics, add additional examples (PBPK, QSP with quantum parameters), and incorporate feedback from implementation experience.*
+## 11. Track C → Track D Mapping (Quantum Pharmacology Bridge)
+
+This section formalizes how **Track C (Quantum Extension)** outputs, specified in `medlang_qm_pharmacology_spec_v0.1.md`, are consumed by **Track D (Pharmacometrics/QSP)**.
+
+Track C provides domain-level operators such as:
+
+- `QM_BindingFreeEnergy` → outputs including:
+  - `ΔG_bind : Quantity<Energy, f64>`,
+  - `k_on : RateConstPerConc`,
+  - `k_off : RateConst`.
+- `QM_PartitionCoefficient` → outputs including:
+  - `ΔG_partition : Quantity<Energy, f64>`,
+  - `Kp : f64` (dimensionless partition coefficient).
+
+Track D consumes these outputs as **typed covariates** and **hyperparameters** for PBPK and QSP models. The mapping is defined at the level of **parameter transforms**, respecting all unit rules of Section 4.
+
+### 11.1 Quantum → PBPK: Partition Coefficients and Kp
+
+Given a quantum partition result for a drug:
+
+```medlang
+let partition_result = QM_PartitionCoefficient {
+    molecule = drug,
+    phase_A  = SMD(solvent = "water"),      // plasma
+    phase_B  = SMD(solvent = "tumor_tissue"),
+    method   = qm_method,
+    temperature = 310.0 K
+}
+
+let ΔG_partition : Energy = partition_result.ΔG_partition
+let Kp_QM        : f64    = partition_result.Kp
+```
+
+Track D defines a **tissue partition coefficient** for PBPK models as:
+
+```medlang
+fn Kp_tissue(
+    ΔG_partition : Quantity<Energy, f64>,
+    T            : Quantity<Kelvin, f64>,
+    w_ML         : MLParamVector,
+    eta_Kp       : f64
+) -> f64 {
+    // Thermodynamic baseline from QM
+    let R      : EnergyPerMolPerK = 8.314e-3 kJ/(mol·K)  // gas constant
+    let expo   : f64 = -(ΔG_partition / (R * T))         // dimensionless
+    let Kp_QM  : f64 = exp(expo)                         // dimensionless
+
+    // ML correction (dimensionless) and random effect
+    let Kp_ML  : f64 = KpT_ML{w = w_ML}.g_Kp(ΔG_partition, other_features)
+    let Kp_IIV : f64 = exp(eta_Kp)
+
+    return Kp_QM * Kp_ML * Kp_IIV
+}
+```
+
+PBPK tumor or organ compartments then use `Kp_tissue` as the tissue:plasma partition:
+
+```medlang
+model PBPK_Tumor {
+    param Kp_tumor : f64 = Kp_tissue(
+        ΔG_partition = partition_result.ΔG_partition,
+        T            = 310.0 K,
+        w_ML         = w_Kp,
+        eta_Kp       = eta_Kp_tumor_i
+    )
+    ...
+}
+```
+
+This makes the PBPK structure **quantum-informed** but still allows:
+
+* ML corrections (to capture multiscale effects not handled by QM), and
+* inter-individual variability via random effects.
+
+### 11.2 Quantum → PD/QSP: EC50 and k_kill
+
+Given binding data from `QM_BindingFreeEnergy` and `QM_Kinetics`:
+
+```medlang
+let binding = QM_BindingFreeEnergy {
+    ligand   = drug,
+    target   = receptor,
+    ...
+}
+
+let kinetics = QM_Kinetics {
+    ligand   = drug,
+    target   = receptor,
+    ...
+}
+
+let ΔG_bind : Energy          = binding.ΔG_bind
+let k_on    : RateConstPerConc = kinetics.k_on
+let k_off   : RateConst        = kinetics.k_off
+```
+
+Track D defines **quantum-informed PD parameters** as:
+
+#### 11.2.1 EC50 from ΔG_bind
+
+```medlang
+fn Kd_from_ΔG(
+    ΔG_bind : Quantity<Energy, f64>,
+    T       : Quantity<Kelvin, f64>
+) -> Quantity<Concentration, f64> {
+    let R  : EnergyPerMolPerK = 8.314e-3 kJ/(mol·K)
+    let C0 : Concentration    = 1.0 M                 // standard concentration
+    
+    let exponent : f64 = (ΔG_bind / (R * T))          // dimensionless
+    return C0 * exp(exponent)
+}
+
+fn EC50_from_Kd(
+    Kd          : Quantity<Concentration, f64>,
+    alpha_EC50  : f64,     // calibration factor
+    eta_EC50    : f64      // random effect
+) -> Quantity<Concentration, f64> {
+    return alpha_EC50 * Kd * exp(eta_EC50)
+}
+```
+
+Usage in Track D model:
+
+```medlang
+// Population model
+param alpha_EC50 : f64              // calibration factor to be estimated
+rand  eta_EC50   : f64 ~ Normal(0, omega_EC50^2)
+
+let Kd_QM   = Kd_from_ΔG(ΔG_bind = binding.ΔG_bind, T = 310.0 K)
+let EC50_i  = EC50_from_Kd(Kd_QM, alpha_EC50, eta_EC50)
+
+// Use in PD model
+model PD_Emax {
+    param EC50 : Concentration = EC50_i
+    ...
+}
+```
+
+#### 11.2.2 k_kill from k_on, k_off
+
+A QSP tumor-immune model may define:
+
+```medlang
+fn f_QM_kill_scale(
+    k_on      : Quantity<RateConstPerConc, f64>,
+    k_off     : Quantity<RateConst, f64>,
+    k_on_ref  : Quantity<RateConstPerConc, f64>,
+    k_off_ref : Quantity<RateConst, f64>,
+    beta_on   : f64,
+    beta_off  : f64
+) -> f64 {
+    let ratio_on  : f64 = (k_on / k_on_ref)           // dimensionless
+    let ratio_off : f64 = (k_off_ref / k_off)         // dimensionless
+    return pow(ratio_on, beta_on) * pow(ratio_off, beta_off)
+}
+
+fn k_kill_from_QM(
+    k_on         : Quantity<RateConstPerConc, f64>,
+    k_off        : Quantity<RateConst, f64>,
+    k_kill_base  : Quantity<RateConst, f64>,
+    eta_k_kill   : f64
+) -> Quantity<RateConst, f64> {
+    let f_qm : f64 = f_QM_kill_scale(k_on, k_off, k_on_ref, k_off_ref, beta_on, beta_off)
+    return k_kill_base * f_qm * exp(eta_k_kill)
+}
+```
+
+Binding into QSP:
+
+```medlang
+param k_kill_base : RateConst
+param beta_on     : f64 = 0.5
+param beta_off    : f64 = 0.5
+rand  eta_k_kill  : f64 ~ Normal(0, omega_k_kill^2)
+
+let k_kill_i = k_kill_from_QM(kinetics.k_on, kinetics.k_off, k_kill_base, eta_k_kill)
+
+model TumorImmuneQSP {
+    param k_kill : RateConst = k_kill_i
+    
+    dTumor/dt = k_grow * Tumor * (1 - Tumor/T_max) - k_kill * Effector * Tumor
+    ...
+}
+```
+
+Thus, tumor killing rates and EC50 values are **functions of quantum binding mechanics**, with:
+
+* explicit scaling hyperparameters (`alpha_EC50`, `beta_on`, `beta_off`), and
+* random effects for inter-individual or inter-compound variability.
+
+### 11.3 Probabilistic Use of QM Outputs
+
+Track D treats Track C outputs **deterministically** by default, but they can inform priors:
+
+```medlang
+// Example: EC50 prior centered on quantum prediction
+let Kd_QM = Kd_from_ΔG(binding.ΔG_bind, T = 310.0 K)
+
+inference Bayesian_QM_Informed {
+    population_model = ...
+    
+    priors {
+        // Prior centered at QM prediction with QM uncertainty
+        alpha_EC50 ~ Normal(1.0, 0.5)  // calibration factor
+        
+        // Or allow ΔG_bind itself to vary around QM prediction
+        ΔG_bind_true ~ Normal(
+            mean = binding.ΔG_bind,
+            sd   = binding.uncertainty
+        )
+        
+        // Use ΔG_bind_true in parameter mapping
+        let Kd_i = Kd_from_ΔG(ΔG_bind_true, T)
+        ...
+    }
+}
+```
+
+or appear in `Measure`s as pseudo-data. This retains:
+
+* physical grounding from quantum pharmacology, and
+* statistical calibration and uncertainty quantification at the population level.
+
+### 11.4 Summary
+
+Section 11 establishes:
+
+- **Formal mappings** from Track C quantum operators to Track D parameters:
+  * `ΔG_partition → Kp` (PBPK tissue partitioning)
+  * `ΔG_bind → Kd → EC50` (PD potency)
+  * `k_on, k_off → k_kill` (QSP kinetics)
+
+- **Unit safety** through all mappings:
+  * Thermodynamic exponentials are dimensionless: `exp(ΔG/(R·T))`
+  * Output quantities have correct units: `Kd : Concentration`, `EC50 : Concentration`, `k_kill : RateConst`
+
+- **Calibration layers** allow data-driven correction:
+  * `alpha_EC50`, `beta_on`, `beta_off` as free parameters
+  * Posterior inference reveals agreement/tension between QM and clinical data
+
+- **Uncertainty propagation** in Bayesian mode:
+  * QM method uncertainty → parameter priors → PK/PD predictions
+
+This completes the quantum-to-clinical vertical, enabling:
+
+> **Ab initio quantum calculations → PBPK partition → QSP dynamics → Population inference → Clinical outcomes**
+
+with full type safety, unit consistency, and statistical rigor.
+
+---
+
+*This completes the MedLang Pharmacometrics & QSP Specification v0.1 with Track C integration. All sections (1–11) are now complete. The specification provides a rigorous foundation for quantum-informed pharmacometrics with hybrid mechanistic-ML models.*
