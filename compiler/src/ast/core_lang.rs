@@ -40,6 +40,12 @@ pub enum TypeAnn {
     EvidenceResult,
     SimulationResult,
     FitResult,
+
+    // Week 29: AI/ML types
+    SurrogateModel,
+
+    // Week 31-32: Reinforcement Learning types
+    RLPolicy, // Handle to a trained RL policy (Q-table, neural policy, etc.)
 }
 
 impl TypeAnn {
@@ -59,6 +65,8 @@ impl TypeAnn {
             TypeAnn::EvidenceResult => "EvidenceResult",
             TypeAnn::SimulationResult => "SimulationResult",
             TypeAnn::FitResult => "FitResult",
+            TypeAnn::SurrogateModel => "SurrogateModel",
+            TypeAnn::RLPolicy => "RLPolicy",
         }
     }
 }

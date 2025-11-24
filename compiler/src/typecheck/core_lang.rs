@@ -204,6 +204,65 @@ fn build_builtin_signatures() -> HashMap<String, TypedFnSig> {
         TypedFnSig::new(vec![Model, String], FitResult),
     );
 
+    // Week 29: First-class surrogate built-ins
+    // Note: BackendKind will be Enum("BackendKind") when we add enum support to builtins
+    // For now we use a placeholder approach - this will be refined when enums are fully integrated
+
+    // train_surrogate(ev: EvidenceProgram, cfg: Record) -> SurrogateModel
+    // cfg should be SurrogateTrainConfig but we use generic Record for now
+    builtins.insert(
+        "train_surrogate".to_string(),
+        TypedFnSig::new(
+            vec![
+                EvidenceProgram,
+                Record(vec![
+                    ("n_train".to_string(), Int),
+                    ("backend".to_string(), String), // Will become Enum("BackendKind")
+                    ("seed".to_string(), Int),
+                    ("max_epochs".to_string(), Int),
+                    ("batch_size".to_string(), Int),
+                ]),
+            ],
+            SurrogateModel,
+        ),
+    );
+
+    // run_evidence_typed(ev: EvidenceProgram, backend: String) -> EvidenceResult
+    // Updated version of run_evidence that will take BackendKind enum instead of String
+    builtins.insert(
+        "run_evidence_typed".to_string(),
+        TypedFnSig::new(
+            vec![EvidenceProgram, String], // String will become Enum("BackendKind")
+            EvidenceResult,
+        ),
+    );
+
+    // run_evidence_with_surrogate(ev: EvidenceProgram, s: SurrogateModel, backend: String) -> EvidenceResult
+    builtins.insert(
+        "run_evidence_with_surrogate".to_string(),
+        TypedFnSig::new(
+            vec![EvidenceProgram, SurrogateModel, String], // String will become Enum("BackendKind")
+            EvidenceResult,
+        ),
+    );
+
+    // Week 30: Surrogate evaluation built-in
+    // evaluate_surrogate(ev: EvidenceProgram, surr: SurrogateModel, cfg: SurrogateEvalConfig) -> SurrogateEvalReport
+    use crate::types::core_lang::{
+        build_surrogate_eval_cfg_type, build_surrogate_eval_report_type,
+    };
+    builtins.insert(
+        "evaluate_surrogate".to_string(),
+        TypedFnSig::new(
+            vec![
+                EvidenceProgram,
+                SurrogateModel,
+                build_surrogate_eval_cfg_type(),
+            ],
+            build_surrogate_eval_report_type(),
+        ),
+    );
+
     builtins
 }
 

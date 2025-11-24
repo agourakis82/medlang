@@ -1,0 +1,96 @@
+// Week 29: Surrogate Model Training
+//
+// Defines configuration types for training surrogate models.
+
+module med.ml.surrogate;
+
+import med.ml.backend::{BackendKind};
+
+/// Configuration for training a surrogate model
+///
+/// Controls how training data is generated and how the surrogate is trained.
+type SurrogateTrainConfig = {
+  /// Number of mechanistic simulations to generate for training
+  n_train: Int;
+
+  /// Backend to use for generating training data (typically Mechanistic)
+  backend: BackendKind;
+
+  /// Random seed for reproducibility
+  seed: Int;
+
+  /// Maximum training epochs for neural network
+  max_epochs: Int;
+
+  /// Batch size for training
+  batch_size: Int;
+};
+
+/// Configuration for evaluating a surrogate model (Week 30)
+///
+/// Controls how the surrogate is evaluated against its mechanistic reference.
+type SurrogateEvalConfig = {
+  /// Number of independent evaluation scenarios to run
+  n_eval: Int;
+
+  /// Backend to use for reference (usually Mechanistic)
+  backend_ref: BackendKind;
+
+  /// Random seed for reproducibility
+  seed: Int;
+};
+
+/// Surrogate evaluation report (Week 30)
+///
+/// Summary of surrogate model quality metrics and contract compliance.
+type SurrogateEvalReport = {
+  /// Number of evaluation scenarios actually run
+  n_eval: Int;
+
+  /// Root mean squared error (average over all outputs)
+  rmse: Float;
+
+  /// Mean absolute error (average over all outputs)
+  mae: Float;
+
+  /// Maximum absolute error across all outputs
+  max_abs_err: Float;
+
+  /// Number of contract violations under mechanistic backend
+  mech_contract_violations: Int;
+
+  /// Number of contract violations under surrogate backend
+  surr_contract_violations: Int;
+};
+
+/// Thresholds for surrogate acceptability (Week 30)
+///
+/// Defines quality criteria for determining if a surrogate is acceptable.
+type SurrogateThresholds = {
+  /// Maximum allowed RMSE
+  max_rmse: Float;
+
+  /// Maximum allowed MAE
+  max_mae: Float;
+
+  /// Maximum allowed absolute error
+  max_abs_err: Float;
+};
+
+/// Check if a surrogate evaluation report meets acceptability thresholds
+///
+/// Returns true if the surrogate is acceptable based on:
+/// - Error metrics within thresholds
+/// - No contract violations in surrogate runs
+fn surrogate_is_acceptable(rep: SurrogateEvalReport, thr: SurrogateThresholds) -> Bool {
+  rep.rmse <= thr.max_rmse &&
+  rep.mae <= thr.max_mae &&
+  rep.max_abs_err <= thr.max_abs_err &&
+  rep.surr_contract_violations == 0
+}
+
+export type SurrogateTrainConfig;
+export type SurrogateEvalConfig;
+export type SurrogateEvalReport;
+export type SurrogateThresholds;
+export fn surrogate_is_acceptable;

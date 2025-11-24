@@ -1,0 +1,38 @@
+// Week 33: Registry API for MedLang
+//
+// Query and inspect run/artifact records for reproducibility and auditing.
+
+module med.registry;
+
+/// Kinds of runs tracked in the registry
+enum RunKind {
+  EvidenceMechanistic;  // Mechanistic QSP simulation
+  EvidenceSurrogate;    // Surrogate-based simulation
+  EvidenceHybrid;       // Hybrid mechanistic/surrogate run
+  SurrogateTrain;       // Surrogate model training
+  SurrogateEval;        // Surrogate evaluation/qualification
+  RLTrain;              // RL policy training
+  RLEval;               // RL policy evaluation
+}
+
+/// Run identifier (UUID as string)
+type RunId = String;
+
+/// Lightweight summary for a single run
+type RunSummary = {
+  id: RunId;
+  kind: RunKind;
+  project_root: String;
+  evidence_program: String;  // Empty string if not applicable
+  started_at: String;        // ISO-8601 timestamp
+  finished_at: String;       // ISO-8601 timestamp
+  git_commit: String;        // Empty string if not available
+  git_dirty: Bool;
+};
+
+export enum RunKind;
+export type RunId;
+export type RunSummary;
+
+// Note: Built-in functions list_runs and get_run_summary
+// are defined at the runtime level and callable from MedLang

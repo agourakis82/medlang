@@ -1,6 +1,6 @@
 [package]
 name = "medlangc"
-version = "0.1.0"
+version = "0.4.0"
 edition = "2021"
 authors = ["MedLang Contributors"]
 description = "MedLang compiler for computational medicine"
@@ -36,6 +36,14 @@ pretty_assertions = "1.4"
 
 # Random number generation
 rand = "0.8"
+rand_chacha = "0.3"  # Week 30: Deterministic RNG for surrogate evaluation
+
+# Week 29: Unique identifiers for surrogates
+uuid = { version = "1.6", features = ["v4", "serde"] }
+
+# Week 33: Registry timestamps and home directory
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5.0"
 
 [dev-dependencies]
 criterion = "0.5"

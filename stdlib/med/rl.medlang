@@ -1,0 +1,107 @@
+// Week 31-32: Reinforcement Learning for QSP-based Policy Training
+//
+// Defines types and interfaces for learning dosing policies using RL
+// on top of QSP models and surrogates.
+
+module med.rl;
+
+import med.ml.backend::{BackendKind};
+
+/// Configuration for RL environment (dose-toxicity-efficacy)
+///
+/// Defines the MDP structure for learning dosing policies.
+type RLEnvConfig = {
+  /// Evidence program to use for dynamics
+  evidence_program: EvidenceProgram;
+
+  /// Backend for simulation (usually Surrogate for speed)
+  backend: BackendKind;
+
+  /// Number of treatment cycles per episode (horizon)
+  n_cycles: Int;
+
+  /// Available dose levels in mg (discrete action space)
+  dose_levels: Vector<Float>;
+
+  /// Weight for efficacy/response component in reward
+  w_response: Float;
+
+  /// Weight for toxicity penalty in reward
+  w_tox: Float;
+
+  /// Penalty per contract violation
+  contract_penalty: Float;
+};
+
+/// Configuration for RL training (Q-learning)
+///
+/// Controls the learning algorithm hyperparameters.
+type RLTrainConfig = {
+  /// Number of episodes to train
+  n_episodes: Int;
+
+  /// Maximum steps per episode (safety limit)
+  max_steps_per_episode: Int;
+
+  /// Discount factor γ ∈ [0,1] for future rewards
+  gamma: Float;
+
+  /// Learning rate α ∈ (0,1] for Q-value updates
+  alpha: Float;
+
+  /// Initial exploration rate (ε-greedy)
+  eps_start: Float;
+
+  /// Final exploration rate after decay
+  eps_end: Float;
+};
+
+/// Training report with learning metrics
+///
+/// Summarizes the training process and final policy quality.
+type RLTrainReport = {
+  /// Number of episodes trained
+  n_episodes: Int;
+
+  /// Average reward per episode during training
+  avg_reward: Float;
+
+  /// Final exploration rate
+  final_epsilon: Float;
+
+  /// Average episode length (number of steps)
+  avg_episode_length: Float;
+
+  /// Total training steps across all episodes
+  total_steps: Int;
+};
+
+/// Policy evaluation report
+///
+/// Metrics from evaluating a learned policy.
+type PolicyEvalReport = {
+  /// Number of evaluation episodes
+  n_episodes: Int;
+
+  /// Average reward per episode
+  avg_reward: Float;
+
+  /// Average contract violations per episode
+  avg_contract_violations: Float;
+
+  /// Average episode length
+  avg_episode_length: Float;
+};
+
+/// Opaque handle to a learned RL policy
+///
+/// Contains Q-table and discretization metadata.
+/// Cannot be constructed directly - obtained from train_policy_rl.
+type RLPolicy = opaque;
+
+// Export all types
+export type RLEnvConfig;
+export type RLTrainConfig;
+export type RLTrainReport;
+export type PolicyEvalReport;
+export type RLPolicy;

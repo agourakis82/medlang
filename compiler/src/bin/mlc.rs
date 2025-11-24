@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use medlangc::codegen::julia::generate_julia;
 use medlangc::codegen::julia_pinn::generate_julia_pinn;
 use medlangc::codegen::stan::generate_stan;
+// Week 33: Registry imports
 use medlangc::data::{analyze_trial, compare_trials, TrialAnalysisResults, TrialDataset};
 use medlangc::datagen::{generate_dataset, DataRow, TrueParams};
 use medlangc::dataload::PKDataset;
@@ -31,6 +32,8 @@ use medlangc::lower::{lower_program, lower_program_with_qm};
 use medlangc::parser::{parse_program, parse_protocol_from_tokens};
 use medlangc::portfolio::{evaluate_portfolio, evaluate_portfolio_design_grid};
 use medlangc::qm_stub::QuantumStub;
+use medlangc::registry::{Registry, RunId, RunKind};
+use medlangc::registry::{Registry, RunId, RunKind};
 use medlangc::stanrun::{
     compile_stan_model, detect_cmdstan, print_diagnostics, run_stan_mcmc, StanConfig,
 };
@@ -569,6 +572,55 @@ enum Commands {
         #[arg(short, long)]
         verbose: bool,
     },
+
+    /// Week 33: Registry query tools for reproducible runs
+    #[command(subcommand)]
+    Runs(RunsCommands),
+}
+
+/// Week 33: Registry query subcommands
+#[derive(Subcommand)]
+enum RunsCommands {
+    /// List recent runs from the registry
+    List {
+        /// Filter by run kind (EvidenceMechanistic, SurrogateTrain, RLTrain, etc.)
+        #[arg(long, value_name = "KIND")]
+        kind: Option<String>,
+
+        /// Number of recent runs to show
+        #[arg(short = 'n', long, default_value = "20")]
+        limit: usize,
+
+        /// Verbose output with full details
+        #[arg(short, long)]
+        verbose: bool,
+    },
+
+    /// Show detailed information about a specific run
+    Show {
+        /// Run ID to display
+        #[arg(value_name = "RUN_ID")]
+        id: String,
+
+        /// Verbose output with raw JSON
+        #[arg(short, long)]
+        verbose: bool,
+    },
+
+    /// Export the configuration from a run to a file
+    ExportConfig {
+        /// Run ID to export config from
+        #[arg(long, value_name = "RUN_ID")]
+        id: String,
+
+        /// Output file path for config JSON
+        #[arg(short, long, value_name = "OUTPUT")]
+        out: PathBuf,
+
+        /// Verbose output
+        #[arg(short, long)]
+        verbose: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -780,6 +832,17 @@ fn main() -> Result<()> {
             output,
             verbose,
         ),
+        Commands::Runs(runs_cmd) => match runs_cmd {
+            RunsCommands::List {
+                kind,
+                limit,
+                verbose,
+            } => runs_list_command(kind, limit, verbose),
+            RunsCommands::Show { id, verbose } => runs_show_command(id, verbose),
+            RunsCommands::ExportConfig { id, out, verbose } => {
+                runs_export_config_command(id, out, verbose)
+            }
+        },
     }
 }
 
@@ -919,6 +982,224 @@ fn compile_command(
         input.display(),
         output_path.display()
     );
+
+    Ok(())
+}
+
+// =============================================================================
+// Week 33: Registry Query Commands
+// =============================================================================
+
+/// List recent runs from the registry
+fn runs_list_command(kind_filter: Option<String>, limit: usize, verbose: bool) -> Result<()> {
+    // Open registry
+    let registry = Registry::new_default()
+        .context("Failed to open registry. Run with a MedLang project to create registry.")?;
+
+    // Parse kind filter if provided
+    let kind: Option<RunKind> = if let Some(kind_str) = &kind_filter {
+        let parsed = match kind_str.as_str() {
+            "EvidenceMechanistic" => RunKind::EvidenceMechanistic,
+            "EvidenceSurrogate" => RunKind::EvidenceSurrogate,
+            "EvidenceHybrid" => RunKind::EvidenceHybrid,
+            "SurrogateTrain" => RunKind::SurrogateTrain,
+            "SurrogateEval" => RunKind::SurrogateEval,
+            "RLTrain" => RunKind::RLTrain,
+            "RLEval" => RunKind::RLEval,
+            _ => bail!("Unknown run kind '{}'. Valid kinds: EvidenceMechanistic, EvidenceSurrogate, EvidenceHybrid, SurrogateTrain, SurrogateEval, RLTrain, RLEval", kind_str),
+        };
+        Some(parsed)
+    } else {
+        None
+    };
+
+    // Load runs
+    let runs = if let Some(k) = kind {
+        if verbose {
+            eprintln!("Filtering by kind: {:?}", k);
+        }
+        registry
+            .find_runs_by_kind(k)
+            .context("Failed to query runs by kind")?
+    } else {
+        registry.recent_runs(limit).context("Failed to load runs")?
+    };
+
+    if runs.is_empty() {
+        println!("No runs found in registry.");
+        if kind_filter.is_some() {
+            println!("Try running without --kind filter to see all runs.");
+        }
+        return Ok(());
+    }
+
+    // Print header
+    println!("Recent Runs from Registry");
+    println!("=========================");
+    println!();
+    println!(
+        "{:<38} {:<25} {:<20} {:<25}",
+        "Run ID", "Kind", "Started", "Project"
+    );
+    println!("{}", "-".repeat(110));
+
+    // Print runs (most recent first)
+    let display_count = runs.len().min(limit);
+    for run in runs.iter().take(display_count) {
+        let kind_str = format!("{:?}", run.kind);
+        let started_str = run.started_at.format("%Y-%m-%d %H:%M:%S").to_string();
+        let project_short = if run.project_root.len() > 20 {
+            format!("...{}", &run.project_root[run.project_root.len() - 17..])
+        } else {
+            run.project_root.clone()
+        };
+
+        println!(
+            "{:<38} {:<25} {:<20} {:<25}",
+            run.id.0, kind_str, started_str, project_short
+        );
+
+        if verbose {
+            if let Some(module) = &run.module_path {
+                println!("  Module: {}", module);
+            }
+            if let Some(ev) = &run.evidence_program {
+                println!("  Evidence: {}", ev);
+            }
+            if let Some(commit) = &run.git_commit {
+                let dirty = if run.git_dirty { " (dirty)" } else { "" };
+                println!("  Git: {}{}", &commit[..8.min(commit.len())], dirty);
+            }
+            println!();
+        }
+    }
+
+    println!();
+    println!("Showing {} of {} runs", display_count, runs.len());
+    if !verbose {
+        println!("Use --verbose for more details");
+    }
+    println!();
+    println!("Use 'mlc runs show <RUN_ID>' to see full details");
+
+    Ok(())
+}
+
+/// Show detailed information about a specific run
+fn runs_show_command(id_str: String, verbose: bool) -> Result<()> {
+    // Parse run ID
+    let uuid = uuid::Uuid::parse_str(&id_str)
+        .with_context(|| format!("Invalid run ID format: {}", id_str))?;
+    let run_id = RunId(uuid);
+
+    // Open registry and find run
+    let registry = Registry::new_default().context("Failed to open registry")?;
+    let run = registry
+        .find_run(run_id)
+        .context("Failed to query registry")?
+        .with_context(|| format!("Run not found: {}", id_str))?;
+
+    // Print run details
+    println!("Run Details");
+    println!("===========");
+    println!();
+    println!("ID:           {}", run.id.0);
+    println!("Kind:         {:?}", run.kind);
+    println!("Started:      {}", run.started_at.to_rfc3339());
+    println!("Finished:     {}", run.finished_at.to_rfc3339());
+    println!(
+        "Duration:     {:.2}s",
+        (run.finished_at - run.started_at).num_milliseconds() as f64 / 1000.0
+    );
+    println!();
+
+    println!("Context:");
+    println!("  Project:    {}", run.project_root);
+    if let Some(module) = &run.module_path {
+        println!("  Module:     {}", module);
+    }
+    if let Some(ev) = &run.evidence_program {
+        println!("  Evidence:   {}", ev);
+    }
+    println!();
+
+    println!("Git Provenance:");
+    if let Some(commit) = &run.git_commit {
+        println!("  Commit:     {}", commit);
+        println!("  Dirty:      {}", run.git_dirty);
+    } else {
+        println!("  Not tracked");
+    }
+    println!();
+
+    println!("Configuration:");
+    println!("{}", serde_json::to_string_pretty(&run.config).unwrap());
+    println!();
+
+    println!("Metrics:");
+    println!("{}", serde_json::to_string_pretty(&run.metrics).unwrap());
+    println!();
+
+    println!("Artifacts:");
+    if run.artifacts.is_empty() {
+        println!("  None");
+    } else {
+        for artifact_id in &run.artifacts {
+            println!("  - {}", artifact_id.0);
+        }
+    }
+    println!();
+
+    if verbose {
+        println!("Raw JSON:");
+        println!("{}", serde_json::to_string_pretty(&run).unwrap());
+        println!();
+    }
+
+    Ok(())
+}
+
+/// Export configuration from a run to a file
+fn runs_export_config_command(id_str: String, out_path: PathBuf, verbose: bool) -> Result<()> {
+    if verbose {
+        eprintln!("Exporting config from run: {}", id_str);
+    }
+
+    // Parse run ID
+    let uuid = uuid::Uuid::parse_str(&id_str)
+        .with_context(|| format!("Invalid run ID format: {}", id_str))?;
+    let run_id = RunId(uuid);
+
+    // Open registry and find run
+    let registry = Registry::new_default().context("Failed to open registry")?;
+    let run = registry
+        .find_run(run_id)
+        .context("Failed to query registry")?
+        .with_context(|| format!("Run not found: {}", id_str))?;
+
+    if verbose {
+        eprintln!("Found run: {:?} from {}", run.kind, run.started_at);
+    }
+
+    // Write config to file
+    let config_json =
+        serde_json::to_string_pretty(&run.config).context("Failed to serialize configuration")?;
+
+    fs::write(&out_path, config_json)
+        .with_context(|| format!("Failed to write config to: {}", out_path.display()))?;
+
+    println!("✓ Configuration exported to: {}", out_path.display());
+
+    if verbose {
+        println!("\nTo reproduce this run, use the exported configuration with:");
+        match run.kind {
+            RunKind::SurrogateTrain => {
+                println!("  mlc train-surrogate --config {}", out_path.display())
+            }
+            RunKind::RLTrain => println!("  mlc train-policy-rl --config {}", out_path.display()),
+            _ => println!("  (Reproduction command varies by run kind)"),
+        }
+    }
 
     Ok(())
 }

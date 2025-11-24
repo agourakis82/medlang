@@ -1,0 +1,20 @@
+// Week 29: ML Backend Selection
+//
+// Defines the BackendKind enum for selecting between mechanistic,
+// surrogate, and hybrid backends in evidence programs.
+
+module med.ml.backend;
+
+/// Backend kind for evidence program execution
+///
+/// Determines which computational backend to use:
+/// - Mechanistic: Full mechanistic model simulation (slow, accurate)
+/// - Surrogate: Neural network/ML surrogate (fast, approximate)
+/// - Hybrid: Combination of mechanistic and surrogate (balanced)
+enum BackendKind {
+  Mechanistic;
+  Surrogate;
+  Hybrid;
+}
+
+export enum BackendKind;
