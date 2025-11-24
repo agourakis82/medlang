@@ -1,0 +1,170 @@
+// Week 34: Dataset Specification & Mapping DSL
+//
+// This module defines types for explicitly specifying how clinical datasets
+// should be transformed into model-ready data, including observation selection,
+// unit handling, covariate requirements, and censoring/BLOQ handling.
+
+module med.dataset;
+
+/// Classification of observation types in clinical data
+enum ObservationKind {
+  /// Plasma concentration (PK endpoint)
+  Concentration;
+
+  /// Tumor size or volume (oncology endpoint)
+  TumourSize;
+
+  /// Absolute neutrophil count (toxicity marker)
+  ANC;
+
+  /// Clinical endpoint score (efficacy/safety)
+  EndpointScore;
+
+  /// Custom observation type
+  Custom;
+}
+
+/// Strategy for handling censored data (e.g., below limit of quantification)
+enum CensoringStrategy {
+  /// No censoring
+  None;
+
+  /// Right-censoring: values <= LLOQ are flagged
+  RightCensored;
+
+  /// Custom censoring rule (future extension)
+  Custom;
+}
+
+/// Specification for converting clinical data to model-ready format
+///
+/// This type explicitly defines:
+/// - Which observations to use (by kind)
+/// - Expected units for validation
+/// - Required covariates
+/// - Censoring/BLOQ handling
+///
+/// Example:
+/// ```
+/// let spec = {
+///   observation_kind = ObservationKind::Concentration;
+///   time_unit = "hour";
+///   value_unit = "mg/L";
+///   required_covariates = ["WT", "AGE"];
+///   require_complete_covariates = true;
+///   lloq = 0.05;  // mg/L
+///   description = "PK Phase 1 dataset specification";
+/// };
+/// ```
+type DatasetSpec = {
+  /// Which observation kind is the primary dependent variable?
+  observation_kind: ObservationKind;
+
+  /// Expected time unit in the data (e.g., "hour", "day")
+  time_unit: String;
+
+  /// Expected value unit in the data (e.g., "mg/L", "ng/mL")
+  value_unit: String;
+
+  /// List of baseline covariates required for the model
+  required_covariates: Vector<String>;
+
+  /// If true, all subjects must have all required covariates
+  require_complete_covariates: Bool;
+
+  /// Optional lower limit of quantification for censoring
+  /// If provided, values <= lloq are flagged as censored
+  lloq: Real?;
+
+  /// Optional description for documentation
+  description: String?;
+};
+
+/// Enhanced model data with censoring and covariate structure
+///
+/// This is the canonical format for model-ready data after applying
+/// a DatasetSpec to raw clinical data.
+type EnhancedModelData = {
+  /// Number of subjects
+  n_subj: Int;
+
+  /// Number of observations
+  n_obs: Int;
+
+  /// Unique subject IDs
+  subj_ids: Vector<Int>;
+
+  /// Subject index (1..n_subj) for each observation
+  obs_subj: Vector<Int>;
+
+  /// Observation times (in canonical units)
+  obs_time: Vector<Real>;
+
+  /// Observation values
+  obs_value: Vector<Real>;
+
+  /// Censoring flags (true = value <= LLOQ)
+  obs_is_censored: Vector<Bool>;
+
+  /// Lower limit of quantification (if applicable)
+  lloq: Real?;
+
+  /// Names of covariates in the dataset
+  covariate_names: Vector<String>;
+
+  /// Covariate values: n_subj × n_covariates matrix (flattened)
+  covariate_values: Vector<Vector<Real>>;
+
+  /// Which observation kind this data represents
+  observation_kind: ObservationKind;
+
+  /// Description of the dataset specification used
+  dataset_spec: String?;
+};
+
+/// Summary statistics for a dataset
+type DatasetSummary = {
+  /// Number of subjects
+  n_subj: Int;
+
+  /// Number of observations
+  n_obs: Int;
+
+  /// Number of censored observations
+  n_censored: Int;
+
+  /// Censoring rate (percent)
+  censoring_rate: Real;
+
+  /// Minimum uncensored observation value
+  obs_min: Real;
+
+  /// Maximum uncensored observation value
+  obs_max: Real;
+
+  /// Mean uncensored observation value
+  obs_mean: Real;
+
+  /// Lower limit of quantification
+  lloq: Real?;
+
+  /// Type of observation
+  observation_kind: ObservationKind;
+};
+
+// Export all types
+export enum ObservationKind;
+export enum CensoringStrategy;
+export type DatasetSpec;
+export type EnhancedModelData;
+export type DatasetSummary;
+
+// Note: Built-in functions for dataset mapping are defined at the runtime level:
+//
+// fn apply_dataset_spec(clinical_data: ClinicalDataset, spec: DatasetSpec) -> EnhancedModelData
+//   Apply a dataset specification to transform clinical data into model-ready format.
+//
+// fn summarize_dataset(data: EnhancedModelData) -> DatasetSummary
+//   Compute summary statistics for a model-ready dataset.
+//
+// These functions are callable from MedLang but implemented in Rust for performance.
