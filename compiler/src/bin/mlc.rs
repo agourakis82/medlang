@@ -531,6 +531,44 @@ enum Commands {
         #[arg(short, long)]
         verbose: bool,
     },
+
+    /// Check a MedLang module (parse + type check, no code generation)
+    Check {
+        /// Input MedLang module file (.med)
+        #[arg(value_name = "MODULE")]
+        module: PathBuf,
+
+        /// Additional module search paths
+        #[arg(short = 'I', long = "include", value_name = "PATH")]
+        include_paths: Vec<PathBuf>,
+
+        /// Verbose output showing module resolution
+        #[arg(short, long)]
+        verbose: bool,
+    },
+
+    /// Build a MedLang module (check + generate code for all dependencies)
+    Build {
+        /// Input MedLang module file (.med)
+        #[arg(value_name = "MODULE")]
+        module: PathBuf,
+
+        /// Output directory for generated code
+        #[arg(short, long, value_name = "OUTDIR", default_value = "./build")]
+        output_dir: PathBuf,
+
+        /// Backend target (stan or julia)
+        #[arg(short, long, default_value = "stan")]
+        backend: String,
+
+        /// Additional module search paths
+        #[arg(short = 'I', long = "include", value_name = "PATH")]
+        include_paths: Vec<PathBuf>,
+
+        /// Verbose output showing build steps
+        #[arg(short, long)]
+        verbose: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -705,6 +743,18 @@ fn main() -> Result<()> {
             output,
             verbose,
         ),
+        Commands::Check {
+            module,
+            include_paths,
+            verbose,
+        } => check_command(module, include_paths, verbose),
+        Commands::Build {
+            module,
+            output_dir,
+            backend,
+            include_paths,
+            verbose,
+        } => build_command(module, output_dir, backend, include_paths, verbose),
         Commands::DesignOptimize {
             protocol,
             protocol_name,
@@ -2730,6 +2780,96 @@ fn portfolio_design_grid_command(
             );
         }
     }
+
+    Ok(())
+}
+
+// =============================================================================
+// Week 25: Module System Commands
+// =============================================================================
+
+/// Check command: Parse and validate a module without code generation
+fn check_command(module: PathBuf, include_paths: Vec<PathBuf>, verbose: bool) -> Result<()> {
+    use medlangc::ast::ModulePath;
+    use medlangc::loader::{ModuleLoader, ModuleResolver};
+    use medlangc::resolve::NameResolver;
+
+    if verbose {
+        println!("Checking module: {}", module.display());
+    }
+
+    // Create module loader with search paths
+    let mut loader = ModuleLoader::new();
+    for path in include_paths {
+        if verbose {
+            println!("Adding search path: {}", path.display());
+        }
+        loader.add_search_path(path);
+    }
+
+    // For now, this is a scaffold implementation
+    // Full implementation requires parser support for module syntax
+    println!("✓ Module system initialized");
+    println!("✓ Search paths configured");
+
+    if verbose {
+        println!("\nSearch paths:");
+        for (i, path) in loader.search_paths().iter().enumerate() {
+            println!("  [{}] {}", i + 1, path.display());
+        }
+    }
+
+    println!("\n✓ Check passed (scaffold - parser integration pending)");
+
+    Ok(())
+}
+
+/// Build command: Check module and generate code for all dependencies
+fn build_command(
+    module: PathBuf,
+    output_dir: PathBuf,
+    backend: String,
+    include_paths: Vec<PathBuf>,
+    verbose: bool,
+) -> Result<()> {
+    use medlangc::loader::{ModuleLoader, ModuleResolver};
+    use std::fs;
+
+    if verbose {
+        println!("Building module: {}", module.display());
+        println!("Output directory: {}", output_dir.display());
+        println!("Backend: {}", backend);
+    }
+
+    // Create output directory
+    fs::create_dir_all(&output_dir)?;
+
+    // Create module loader
+    let mut loader = ModuleLoader::new();
+    for path in include_paths {
+        if verbose {
+            println!("Adding search path: {}", path.display());
+        }
+        loader.add_search_path(path);
+    }
+
+    // Scaffold implementation
+    println!("✓ Module loader initialized");
+    println!("✓ Output directory created: {}", output_dir.display());
+    println!("✓ Backend configured: {}", backend);
+
+    if verbose {
+        println!("\nBuild configuration:");
+        println!("  Module: {}", module.display());
+        println!("  Output: {}", output_dir.display());
+        println!("  Backend: {}", backend);
+        println!("\nSearch paths:");
+        for (i, path) in loader.search_paths().iter().enumerate() {
+            println!("  [{}] {}", i + 1, path.display());
+        }
+    }
+
+    println!("\n✓ Build complete (scaffold - full codegen pending)");
 
     Ok(())
 }

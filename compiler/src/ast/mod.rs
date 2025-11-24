@@ -5,6 +5,9 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Type alias for identifiers
+pub type Ident = String;
+
 /// Source location for error reporting
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Span {
@@ -29,6 +32,16 @@ pub struct Program {
     pub declarations: Vec<Declaration>,
 }
 
+pub mod evidence;
+pub mod module;
+
+pub use evidence::{
+    DesignDecl, DesignGridSpec, EvidenceBody, EvidenceProgram, HierarchyDecl, HierarchyKind,
+    MapPriorDecl, TrialDecl,
+};
+
+pub use module::{ExportDecl, ExportKind, ImportDecl, ImportItems, ModuleDecl, ModulePath};
+
 /// Top-level declaration
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Declaration {
@@ -37,7 +50,23 @@ pub enum Declaration {
     Measure(MeasureDef),
     Timeline(TimelineDef),
     Cohort(CohortDef),
-    Protocol(ProtocolDef), // Week 8: L₂ Clinical Trial DSL
+    Protocol(ProtocolDef),     // Week 8: L₂ Clinical Trial DSL
+    Evidence(EvidenceProgram), // Week 24: L₃ Evidence Programs
+}
+
+impl Declaration {
+    /// Get the name of this declaration
+    pub fn name(&self) -> &str {
+        match self {
+            Declaration::Model(m) => &m.name,
+            Declaration::Population(p) => &p.name,
+            Declaration::Measure(m) => &m.name,
+            Declaration::Timeline(t) => &t.name,
+            Declaration::Cohort(c) => &c.name,
+            Declaration::Protocol(p) => &p.name,
+            Declaration::Evidence(e) => e.name.as_str(),
+        }
+    }
 }
 
 // =============================================================================

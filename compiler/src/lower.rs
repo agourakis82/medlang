@@ -7,6 +7,8 @@
 //! - Type erasure (keeping only dimension info)
 //! - Expression simplification
 
+pub mod evidence;
+
 use crate::ast::*;
 use crate::ir::*;
 use std::collections::HashMap;

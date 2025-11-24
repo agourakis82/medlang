@@ -230,6 +230,8 @@ impl IRExpr {
     }
 }
 
+pub mod evidence;
+pub mod module;
 pub mod surrogate;
 
 #[cfg(test)]

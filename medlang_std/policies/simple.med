@@ -1,0 +1,40 @@
+// MedLang Standard Library: Simple Policy Templates
+// Week 25: Module System
+//
+// This module provides simple, interpretable dosing policies.
+
+module medlang_std.policies.simple {
+    export *;
+
+    // Fixed dose policy (always use 100% of planned dose)
+    policy FixedDose {
+        expr = 1.0;
+    }
+
+    // ANC-based dose reduction policy
+    policy ANCBased {
+        expr = if ANC < 1.0 then 0.5
+               else if ANC < 1.5 then 0.75
+               else 1.0;
+    }
+
+    // Tumor response-based dose escalation
+    policy TumorResponseBased {
+        expr = if Tumour < 0.7 * Baseline then 1.2  // Escalate if good response
+               else if Tumour > 1.2 * Baseline then 0.5  // Reduce if progression
+               else 1.0;
+    }
+
+    // Cycle-based dose escalation
+    policy CycleEscalation {
+        expr = if Cycle == 1 then 0.5    // Start at 50%
+               else if Cycle == 2 then 0.75  // Increase to 75%
+               else 1.0;                  // Full dose thereafter
+    }
+
+    // Time-based dose modification
+    policy TimeBasedReduction {
+        expr = if Time > 60.0 then 0.75  // Reduce after 60 days
+               else 1.0;
+    }
+}

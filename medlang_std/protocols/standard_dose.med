@@ -1,0 +1,106 @@
+// MedLang Standard Library: Standard Dosing Protocols
+// Week 25: Module System
+//
+// This module provides reusable dosing protocol templates.
+
+module medlang_std.protocols.standard_dose {
+    // Import PK models for reference
+    import medlang_std.models.pkpd::{OneCmptIV, TwoCmptIV};
+
+    // Export standard protocols
+    export WeeklyDose;
+    export Q3WDose;
+    export DailyOral;
+
+    // Weekly dosing protocol
+    protocol WeeklyDose {
+        population_model OneCmptIV_Pop;
+
+        arms {
+            Dose50 = arm("50 mg weekly", dose_mg = 50.0);
+            Dose100 = arm("100 mg weekly", dose_mg = 100.0);
+            Dose200 = arm("200 mg weekly", dose_mg = 200.0);
+        }
+
+        visits {
+            Baseline = visit(day = 0.0);
+            Week4 = visit(day = 28.0);
+            Week8 = visit(day = 56.0);
+            Week12 = visit(day = 84.0);
+        }
+
+        inclusion {
+            age_between(18, 75);
+            ECOG_in([0, 1]);
+        }
+
+        endpoints {
+            Response = binary_response(
+                observable = "TumourVolume",
+                shrink = 0.30,
+                window = [28.0, 84.0]
+            );
+        }
+    }
+
+    // Every-three-weeks dosing (Q3W)
+    protocol Q3WDose {
+        population_model TwoCmptIV_Pop;
+
+        arms {
+            Standard = arm("Standard Q3W", dose_mg = 200.0);
+            High = arm("High Q3W", dose_mg = 400.0);
+        }
+
+        visits {
+            Baseline = visit(day = 0.0);
+            Cycle2 = visit(day = 21.0);
+            Cycle4 = visit(day = 63.0);
+            Cycle6 = visit(day = 105.0);
+        }
+
+        inclusion {
+            age_between(18, 80);
+            ECOG_in([0, 1, 2]);
+        }
+
+        endpoints {
+            ORR = binary_response(
+                observable = "TumourVolume",
+                shrink = 0.30,
+                window = [21.0, 105.0]
+            );
+        }
+    }
+
+    // Daily oral dosing
+    protocol DailyOral {
+        population_model OneCmptOral_Pop;
+
+        arms {
+            Low = arm("50 mg daily", dose_mg = 50.0);
+            Medium = arm("100 mg daily", dose_mg = 100.0);
+            High = arm("200 mg daily", dose_mg = 200.0);
+        }
+
+        visits {
+            Baseline = visit(day = 0.0);
+            Week2 = visit(day = 14.0);
+            Week4 = visit(day = 28.0);
+            Week8 = visit(day = 56.0);
+        }
+
+        inclusion {
+            age_between(18, 75);
+            ECOG_in([0, 1]);
+        }
+
+        endpoints {
+            Response = binary_response(
+                observable = "TumourVolume",
+                shrink = 0.30,
+                window = [14.0, 56.0]
+            );
+        }
+    }
+}

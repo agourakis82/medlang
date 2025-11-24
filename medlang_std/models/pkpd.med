@@ -1,0 +1,57 @@
+// MedLang Standard Library: PK/PD Models
+// Week 25: Module System
+//
+// This module provides standard pharmacokinetic and pharmacodynamic models
+// for reuse across clinical trial protocols.
+
+module medlang_std.models.pkpd {
+    // Export all models in this module
+    export *;
+
+    // One-compartment model with IV bolus dosing
+    model OneCmptIV {
+        state A_central : DoseMass;
+        param CL : Clearance;
+        param V : Volume;
+
+        dA_central/dt = -CL / V * A_central;
+
+        observable C_plasma : ConcMass = A_central / V;
+    }
+
+    // Two-compartment model with IV bolus dosing
+    model TwoCmptIV {
+        state A_central : DoseMass;
+        state A_peripheral : DoseMass;
+
+        param CL : Clearance;
+        param V1 : Volume;
+        param V2 : Volume;
+        param Q : Clearance;
+
+        let k10 = CL / V1;
+        let k12 = Q / V1;
+        let k21 = Q / V2;
+
+        dA_central/dt = -(k10 + k12) * A_central + k21 * A_peripheral;
+        dA_peripheral/dt = k12 * A_central - k21 * A_peripheral;
+
+        observable C_plasma : ConcMass = A_central / V1;
+    }
+
+    // One-compartment model with first-order absorption
+    model OneCmptOral {
+        state A_gut : DoseMass;
+        state A_central : DoseMass;
+
+        param ka : RateConst;
+        param CL : Clearance;
+        param V : Volume;
+        param F : f64;  // Bioavailability fraction
+
+        dA_gut/dt = -ka * A_gut;
+        dA_central/dt = F * ka * A_gut - CL / V * A_central;
+
+        observable C_plasma : ConcMass = A_central / V;
+    }
+}

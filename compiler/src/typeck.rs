@@ -336,6 +336,7 @@ impl TypeChecker {
             Declaration::Timeline(_) => {} // Timeline doesn't need deep type checking for V0
             Declaration::Cohort(_) => {}   // Cohort doesn't need deep type checking for V0
             Declaration::Protocol(_) => {} // Protocol type checking to be added in Week 8
+            Declaration::Evidence(_) => {} // Evidence program type checking (Week 24)
         }
     }
 
