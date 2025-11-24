@@ -1,0 +1,57 @@
+# Rust build artifacts
+compiler/target/
+**/target/
+
+# Cargo lock for libraries (keep for binaries)
+# We keep Cargo.lock for the compiler binary
+
+# Editor directories and files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Test outputs
+*.csv
+*.json
+*.stan
+!tests/golden/*.stan
+
+# Generated data
+data/
+results/
+output/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Python (if any)
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+env/
+*.egg-info/
+
+# Node (if any for Beagle)
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Compiled binaries
+mlc
+generate_data
+*.exe
+*.dll
+*.so
+*.dylib

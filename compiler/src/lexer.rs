@@ -34,6 +34,84 @@ pub enum Token {
     #[token("cohort")]
     Cohort,
 
+    // Week 8: L₂ Protocol DSL tokens
+    #[token("protocol")]
+    Protocol,
+
+    #[token("arms")]
+    Arms,
+
+    #[token("visits")]
+    Visits,
+
+    #[token("inclusion")]
+    Inclusion,
+
+    #[token("endpoints")]
+    Endpoints,
+
+    #[token("between")]
+    Between,
+
+    // Week 10: Additional protocol tokens
+    #[token("label")]
+    Label,
+
+    #[token("type")]
+    Type,
+
+    #[token("observable")]
+    Observable,
+
+    #[token("shrink_frac")]
+    ShrinkFrac,
+
+    #[token("progression_frac")]
+    ProgressionFrac,
+
+    #[token("ref_baseline")]
+    RefBaseline,
+
+    #[token("window")]
+    Window,
+
+    #[token("age")]
+    Age,
+
+    #[token("ECOG")]
+    ECOG,
+
+    #[token("in")]
+    In,
+
+    #[token("and")]
+    And,
+
+    #[token("baseline_tumour_volume")]
+    BaselineTumourVolume,
+
+    // Week 14: Decision layer tokens
+    #[token("decisions")]
+    Decisions,
+
+    #[token("endpoint")]
+    Endpoint,
+
+    #[token("compare")]
+    Compare,
+
+    #[token("margin")]
+    Margin,
+
+    #[token("prob_threshold")]
+    ProbThreshold,
+
+    #[token("true")]
+    True,
+
+    #[token("false")]
+    False,
+
     #[token("state")]
     State,
 
@@ -48,6 +126,12 @@ pub enum Token {
 
     #[token("input")]
     Input,
+
+    #[token("submodel")]
+    Submodel,
+
+    #[token("connect")]
+    Connect,
 
     #[token("pred")]
     Pred,
@@ -107,6 +191,9 @@ pub enum Token {
     #[token("RateConst")]
     RateConst,
 
+    #[token("TumourVolume")]
+    TumourVolume,
+
     #[token("Quantity")]
     Quantity,
 
@@ -154,6 +241,12 @@ pub enum Token {
 
     #[token(">")]
     Gt,
+
+    #[token(">=")]
+    Gte,
+
+    #[token("<=")]
+    Lte,
 
     #[token("~")]
     Tilde,
@@ -234,11 +327,38 @@ impl fmt::Display for Token {
             Token::Measure => write!(f, "measure"),
             Token::Timeline => write!(f, "timeline"),
             Token::Cohort => write!(f, "cohort"),
+            Token::Protocol => write!(f, "protocol"),
+            Token::Arms => write!(f, "arms"),
+            Token::Visits => write!(f, "visits"),
+            Token::Inclusion => write!(f, "inclusion"),
+            Token::Endpoints => write!(f, "endpoints"),
+            Token::Between => write!(f, "between"),
+            Token::Label => write!(f, "label"),
+            Token::Type => write!(f, "type"),
+            Token::Observable => write!(f, "observable"),
+            Token::ShrinkFrac => write!(f, "shrink_frac"),
+            Token::ProgressionFrac => write!(f, "progression_frac"),
+            Token::RefBaseline => write!(f, "ref_baseline"),
+            Token::Window => write!(f, "window"),
+            Token::Age => write!(f, "age"),
+            Token::ECOG => write!(f, "ECOG"),
+            Token::In => write!(f, "in"),
+            Token::And => write!(f, "and"),
+            Token::BaselineTumourVolume => write!(f, "baseline_tumour_volume"),
+            Token::Decisions => write!(f, "decisions"),
+            Token::Endpoint => write!(f, "endpoint"),
+            Token::Compare => write!(f, "compare"),
+            Token::Margin => write!(f, "margin"),
+            Token::ProbThreshold => write!(f, "prob_threshold"),
+            Token::True => write!(f, "true"),
+            Token::False => write!(f, "false"),
             Token::State => write!(f, "state"),
             Token::Param => write!(f, "param"),
             Token::Obs => write!(f, "obs"),
             Token::Rand => write!(f, "rand"),
             Token::Input => write!(f, "input"),
+            Token::Submodel => write!(f, "submodel"),
+            Token::Connect => write!(f, "connect"),
             Token::Pred => write!(f, "pred"),
             Token::At => write!(f, "at"),
             Token::Dose => write!(f, "dose"),
@@ -258,6 +378,7 @@ impl fmt::Display for Token {
             Token::ConcMass => write!(f, "ConcMass"),
             Token::Clearance => write!(f, "Clearance"),
             Token::RateConst => write!(f, "RateConst"),
+            Token::TumourVolume => write!(f, "TumourVolume"),
             Token::Quantity => write!(f, "Quantity"),
             Token::F64 => write!(f, "f64"),
             Token::Normal => write!(f, "Normal"),
@@ -273,6 +394,8 @@ impl fmt::Display for Token {
             Token::NotEq => write!(f, "!="),
             Token::Lt => write!(f, "<"),
             Token::Gt => write!(f, ">"),
+            Token::Gte => write!(f, ">="),
+            Token::Lte => write!(f, "<="),
             Token::Tilde => write!(f, "~"),
             Token::LParen => write!(f, "("),
             Token::RParen => write!(f, ")"),

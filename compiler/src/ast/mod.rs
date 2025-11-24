@@ -37,6 +37,7 @@ pub enum Declaration {
     Measure(MeasureDef),
     Timeline(TimelineDef),
     Cohort(CohortDef),
+    Protocol(ProtocolDef), // Week 8: L₂ Clinical Trial DSL
 }
 
 // =============================================================================
@@ -54,8 +55,12 @@ pub struct ModelDef {
 pub enum ModelItem {
     State(StateDecl),
     Param(ParamDecl),
+    Input(InputDecl), // Input from another model (e.g., input C_plasma : ConcMass)
     ODE(ODEEquation),
     Observable(ObservableDecl),
+    Let(LetBinding), // Let bindings for intermediate values (e.g., let E_drug = ...)
+    Submodel(SubmodelDecl), // Submodel declaration
+    Connect(ConnectionDecl), // Connection between models
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -87,6 +92,37 @@ pub struct ObservableDecl {
     pub span: Option<Span>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InputDecl {
+    pub name: String,
+    pub ty: TypeExpr,
+    pub span: Option<Span>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LetBinding {
+    pub name: String,
+    pub ty: Option<TypeExpr>, // Optional type annotation
+    pub expr: Expr,
+    pub span: Option<Span>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SubmodelDecl {
+    pub name: String,       // e.g., "PK"
+    pub model_type: String, // e.g., "PK_OneCompOral"
+    pub span: Option<Span>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ConnectionDecl {
+    pub from_model: String, // e.g., "PK"
+    pub from_field: String, // e.g., "C_plasma"
+    pub to_model: String,   // e.g., "QSP"
+    pub to_field: String,   // e.g., "C_plasma"
+    pub span: Option<Span>,
+}
+
 // =============================================================================
 // Population Definition
 // =============================================================================
@@ -106,13 +142,6 @@ pub enum PopulationItem {
     RandomEffect(RandomEffectDecl), // IIV
     BindParams(BindParamsBlock),    // Individual parameter mapping
     UseMeasure(UseMeasureStmt),     // Error model binding
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct InputDecl {
-    pub name: String,
-    pub ty: TypeExpr,
-    pub span: Option<Span>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -231,6 +260,7 @@ pub enum UnitType {
     ConcMass,
     Clearance,
     RateConst,
+    TumourVolume, // For QSP models (mm³ or cm³)
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -412,6 +442,101 @@ impl std::fmt::Display for QualifiedName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.parts.join("."))
     }
+}
+
+// =============================================================================
+// Protocol Definition (L₂ Clinical Trial DSL - Week 8)
+// =============================================================================
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProtocolDef {
+    pub name: String,
+    pub population_model_name: String,
+    pub arms: Vec<ArmDef>,
+    pub visits: Vec<VisitDef>,
+    pub inclusion: Option<InclusionDef>,
+    pub endpoints: Vec<EndpointDef>,
+    pub decisions: Vec<DecisionDef>,
+    pub span: Option<Span>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ArmDef {
+    pub name: String,
+    pub label: String,
+    pub dose_mg: f64,
+    pub span: Option<Span>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VisitDef {
+    pub name: String,
+    pub time_days: f64,
+    pub span: Option<Span>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InclusionDef {
+    pub clauses: Vec<InclusionClause>,
+    pub span: Option<Span>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum InclusionClause {
+    AgeBetween { min_years: u32, max_years: u32 },
+    ECOGIn { allowed: Vec<u8> },
+    BaselineTumourGe { volume_cm3: f64 },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EndpointDef {
+    pub name: String,
+    pub kind: EndpointKind,
+    pub spec: EndpointSpec,
+    pub span: Option<Span>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum EndpointKind {
+    Binary,
+    TimeToEvent,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum EndpointSpec {
+    ResponseRate {
+        observable: String,
+        shrink_fraction: f64,
+        window_start_days: f64,
+        window_end_days: f64,
+    },
+    TimeToProgression {
+        observable: String,
+        increase_fraction: f64,
+        window_start_days: f64,
+        window_end_days: f64,
+        ref_baseline: bool, // if true, use baseline; if false, use nadir (best response)
+    },
+}
+
+/// Decision rule for trial design evaluation
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DecisionDef {
+    pub name: String,
+    pub endpoint_name: String,
+    pub arm_left: String,
+    pub arm_right: String,
+    pub margin: f64,
+    pub prob_threshold: f64,
+    pub direction: DecisionDirection,
+    pub span: Option<Span>,
+}
+
+/// Direction of comparison for decision rule
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum DecisionDirection {
+    LeftBetter,  // arm_left > arm_right by margin
+    RightBetter, // arm_right > arm_left by margin
 }
 
 #[cfg(test)]
