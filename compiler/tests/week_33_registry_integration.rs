@@ -4,11 +4,10 @@
 // Verifies round-trip storage, querying, and end-to-end workflows.
 
 use medlangc::registry::{
-    logging::{log_evidence_run, log_rl_train, log_surrogate_eval},
+    logging::{log_evidence_run, log_surrogate_eval},
     storage::Registry,
     ArtifactId, ArtifactKind, ArtifactRecord, RunId, RunKind, RunLogger, RunRecord,
 };
-use std::path::PathBuf;
 use tempfile::TempDir;
 
 // =============================================================================
@@ -219,33 +218,42 @@ fn test_log_surrogate_eval_helper() {
 }
 
 #[test]
-fn test_log_rl_train_helper() {
+fn test_log_rl_train_via_logger() {
     let temp_dir = TempDir::new().unwrap();
     let logger = create_test_logger(&temp_dir);
 
-    let train_config = medlangc::rl::RLTrainConfig {
-        n_episodes: 1000,
-        max_steps_per_episode: 10,
-        gamma: 0.95,
-        alpha: 0.1,
-        eps_start: 1.0,
-        eps_end: 0.05,
-    };
-
+    // Simulate RL training run
     let train_report = serde_json::json!({
         "avg_reward": 5.2,
         "final_epsilon": 0.05,
         "convergence_episode": 450,
     });
 
-    let run_id = log_rl_train(
-        &logger,
-        &train_config,
-        train_report,
-        "/output/policy.json",
-        Some("/output/train_report.json"),
-    )
-    .unwrap();
+    let train_config = serde_json::json!({
+        "n_episodes": 1000,
+        "max_steps_per_episode": 10,
+        "gamma": 0.95,
+        "alpha": 0.1,
+    });
+
+    // Log as artifacts
+    let policy_artifact = ArtifactRecord::new(
+        ArtifactKind::RLPolicy,
+        Some("/output/policy.json".to_string()),
+    );
+    let report_artifact = ArtifactRecord::new(
+        ArtifactKind::RLTrainReport,
+        Some("/output/train_report.json".to_string()),
+    );
+
+    let run_id = logger
+        .log_run_with_artifacts(
+            RunKind::RLTrain,
+            train_config,
+            train_report,
+            vec![policy_artifact, report_artifact],
+        )
+        .unwrap();
 
     // Verify run and artifacts
     let run = logger.registry().find_run(run_id).unwrap().unwrap();
