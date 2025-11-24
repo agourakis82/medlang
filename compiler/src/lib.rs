@@ -22,4 +22,6 @@ pub mod portfolio;
 pub mod qm_stub;
 pub mod resolve;
 pub mod stanrun;
+pub mod typecheck;
 pub mod typeck;
+pub mod types;

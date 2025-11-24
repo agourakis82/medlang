@@ -32,6 +32,7 @@ pub struct Program {
     pub declarations: Vec<Declaration>,
 }
 
+pub mod core_lang;
 pub mod evidence;
 pub mod module;
 
