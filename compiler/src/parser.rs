@@ -1,0 +1,1528 @@
+use crate::ast::*;
+use crate::lexer::{Token, UnitLiteralValue};
+use nom::{
+    branch::alt,
+    combinator::{map, opt, value},
+    multi::{many0, many1, separated_list0},
+    sequence::{delimited, pair, preceded, terminated},
+    Err, IResult,
+};
+use std::fmt;
+
+/// Parser input is a slice of tokens
+pub type TokenSlice<'a> = &'a [(Token, usize, usize)];
+
+/// Custom error type for parser
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParseError {
+    pub message: String,
+    pub position: Option<usize>,
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(pos) = self.position {
+            write!(f, "Parse error at position {}: {}", pos, self.message)
+        } else {
+            write!(f, "Parse error: {}", self.message)
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+/// Parse a standalone protocol definition from tokens
+pub fn parse_protocol_from_tokens(tokens: TokenSlice) -> Result<ProtocolDef, ParseError> {
+    match protocol_def(tokens) {
+        Ok((remaining, protocol)) => {
+            if !remaining.is_empty() {
+                let pos = remaining[0].1;
+                Err(ParseError {
+                    message: format!("Unexpected token after protocol: {:?}", remaining[0].0),
+                    position: Some(pos),
+                })
+            } else {
+                Ok(protocol)
+            }
+        }
+        Err(e) => Err(ParseError {
+            message: format!("Failed to parse protocol: {:?}", e),
+            position: None,
+        }),
+    }
+}
+
+/// Main entry point: parse a complete MedLang program
+pub fn parse_program(tokens: TokenSlice) -> Result<Program, ParseError> {
+    match program(tokens) {
+        Ok((remaining, prog)) => {
+            if !remaining.is_empty() {
+                let pos = remaining[0].1;
+                Err(ParseError {
+                    message: format!("Unexpected token: {:?}", remaining[0].0),
+                    position: Some(pos),
+                })
+            } else {
+                Ok(prog)
+            }
+        }
+        Err(e) => Err(ParseError {
+            message: format!("Failed to parse program: {:?}", e),
+            position: None,
+        }),
+    }
+}
+
+// ============================================================================
+// Top-level: Program
+// ============================================================================
+
+fn program(input: TokenSlice) -> IResult<TokenSlice, Program> {
+    map(many1(declaration), |declarations| Program { declarations })(input)
+}
+
+fn declaration(input: TokenSlice) -> IResult<TokenSlice, Declaration> {
+    alt((
+        map(model_def, Declaration::Model),
+        map(population_def, Declaration::Population),
+        map(measure_def, Declaration::Measure),
+        map(timeline_def, Declaration::Timeline),
+        map(cohort_def, Declaration::Cohort),
+        map(protocol_def, Declaration::Protocol),
+    ))(input)
+}
+
+// ============================================================================
+// Model definition
+// ============================================================================
+
+fn model_def(input: TokenSlice) -> IResult<TokenSlice, ModelDef> {
+    let (input, _) = token(Token::Model)(input)?;
+    let (input, name) = identifier(input)?;
+    let (input, _) = token(Token::LBrace)(input)?;
+    let (input, items) = many0(model_item)(input)?;
+    let (input, _) = token(Token::RBrace)(input)?;
+
+    Ok((
+        input,
+        ModelDef {
+            name,
+            items,
+            span: None,
+        },
+    ))
+}
+
+fn model_item(input: TokenSlice) -> IResult<TokenSlice, ModelItem> {
+    alt((
+        map(state_decl, ModelItem::State),
+        map(param_decl, ModelItem::Param),
+        map(input_decl, ModelItem::Input),
+        map(let_binding, ModelItem::Let),
+        map(submodel_decl, ModelItem::Submodel),
+        map(connect_decl, ModelItem::Connect),
+        map(ode_equation, ModelItem::ODE),
+        map(observable_decl, ModelItem::Observable),
+    ))(input)
+}
+
+fn state_decl(input: TokenSlice) -> IResult<TokenSlice, StateDecl> {
+    let (input, _) = token(Token::State)(input)?;
+    let (input, name) = identifier(input)?;
+    let (input, _) = token(Token::Colon)(input)?;
+    let (input, ty) = type_expr(input)?;
+
+    Ok((
+        input,
+        StateDecl {
+            name,
+            ty,
+            span: None,
+        },
+    ))
+}
+
+fn param_decl(input: TokenSlice) -> IResult<TokenSlice, ParamDecl> {
+    let (input, _) = token(Token::Param)(input)?;
+    let (input, name) = identifier(input)?;
+    let (input, _) = token(Token::Colon)(input)?;
+    let (input, ty) = type_expr(input)?;
+
+    Ok((
+        input,
+        ParamDecl {
+            name,
+            ty,
+            span: None,
+        },
+    ))
+}
+
+fn let_binding(input: TokenSlice) -> IResult<TokenSlice, LetBinding> {
+    let (input, _) = token(Token::Let)(input)?;
+    let (input, name) = identifier(input)?;
+
+    // Optional type annotation
+    let (input, ty) = opt(preceded(token(Token::Colon), type_expr))(input)?;
+
+    let (input, _) = token(Token::Eq)(input)?;
+    let (input, expr_val) = expr(input)?;
+
+    Ok((
+        input,
+        LetBinding {
+            name,
+            ty,
+            expr: expr_val,
+            span: None,
+        },
+    ))
+}
+
+fn submodel_decl(input: TokenSlice) -> IResult<TokenSlice, SubmodelDecl> {
+    let (input, _) = token(Token::Submodel)(input)?;
+    let (input, name) = identifier(input)?;
+    let (input, _) = token(Token::Colon)(input)?;
+    let (input, model_type) = identifier(input)?;
+
+    Ok((
+        input,
+        SubmodelDecl {
+            name,
+            model_type,
+            span: None,
+        },
+    ))
+}
+
+fn connect_decl(input: TokenSlice) -> IResult<TokenSlice, ConnectionDecl> {
+    let (input, _) = token(Token::Connect)(input)?;
+    let (input, _) = token(Token::LBrace)(input)?;
+
+    // Parse: from_model.from_field = to_model.to_field
+    let (input, to_model) = identifier(input)?;
+    let (input, _) = token(Token::Dot)(input)?;
+    let (input, to_field) = identifier(input)?;
+    let (input, _) = token(Token::Eq)(input)?;
+    let (input, from_model) = identifier(input)?;
+    let (input, _) = token(Token::Dot)(input)?;
+    let (input, from_field) = identifier(input)?;
+
+    let (input, _) = token(Token::RBrace)(input)?;
+
+    Ok((
+        input,
+        ConnectionDecl {
+            from_model,
+            from_field,
+            to_model,
+            to_field,
+            span: None,
+        },
+    ))
+}
+
+fn ode_equation(input: TokenSlice) -> IResult<TokenSlice, ODEEquation> {
+    let (input, state_name) = match input.get(0) {
+        Some((Token::ODEDeriv(name), _, _)) => {
+            let name = name.clone();
+            (&input[1..], name)
+        }
+        _ => {
+            return Err(Err::Error(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Tag,
+            )))
+        }
+    };
+    let (input, _) = token(Token::Eq)(input)?;
+    let (input, rhs) = expr(input)?;
+
+    Ok((
+        input,
+        ODEEquation {
+            state_name,
+            rhs,
+            span: None,
+        },
+    ))
+}
+
+fn observable_decl(input: TokenSlice) -> IResult<TokenSlice, ObservableDecl> {
+    let (input, _) = token(Token::Obs)(input)?;
+    let (input, name) = identifier(input)?;
+    let (input, _) = token(Token::Colon)(input)?;
+    let (input, ty) = type_expr(input)?;
+    let (input, _) = token(Token::Eq)(input)?;
+    let (input, rhs) = expr(input)?;
+
+    Ok((
+        input,
+        ObservableDecl {
+            name,
+            ty,
+            expr: rhs,
+            span: None,
+        },
+    ))
+}
+
+// ============================================================================
+// Population definition
+// ============================================================================
+
+fn population_def(input: TokenSlice) -> IResult<TokenSlice, PopulationDef> {
+    let (input, _) = token(Token::Population)(input)?;
+    let (input, name) = identifier(input)?;
+    let (input, _) = token(Token::LBrace)(input)?;
+    let (input, items) = many0(population_item)(input)?;
+    let (input, _) = token(Token::RBrace)(input)?;
+
+    Ok((
+        input,
+        PopulationDef {
+            name,
+            items,
+            span: None,
+        },
+    ))
+}
+
+fn population_item(input: TokenSlice) -> IResult<TokenSlice, PopulationItem> {
+    alt((
+        map(population_model_ref, PopulationItem::ModelRef),
+        map(input_decl, PopulationItem::Input),
+        map(rand_effect_decl, PopulationItem::RandomEffect),
+        map(bind_params_block, PopulationItem::BindParams),
+        map(use_measure_stmt, PopulationItem::UseMeasure),
+        map(param_decl, PopulationItem::Param),
+    ))(input)
+}
+
+fn population_model_ref(input: TokenSlice) -> IResult<TokenSlice, String> {
+    let (input, _) = token(Token::Model)(input)?;
+    identifier(input)
+}
+
+fn input_decl(input: TokenSlice) -> IResult<TokenSlice, InputDecl> {
+    let (input, _) = token(Token::Input)(input)?;
+    let (input, name) = identifier(input)?;
+    let (input, _) = token(Token::Colon)(input)?;
+    let (input, ty) = type_expr(input)?;
+
+    Ok((
+        input,
+        InputDecl {
+            name,
+            ty,
+            span: None,
+        },
+    ))
+}
+
+fn rand_effect_decl(input: TokenSlice) -> IResult<TokenSlice, RandomEffectDecl> {
+    let (input, _) = token(Token::Rand)(input)?;
+    let (input, name) = identifier(input)?;
+    let (input, _) = token(Token::Colon)(input)?;
+    let (input, ty) = type_expr(input)?;
+    let (input, _) = token(Token::Tilde)(input)?;
+    let (input, dist) = distribution(input)?;
+
+    Ok((
+        input,
+        RandomEffectDecl {
+            name,
+            ty,
+            dist,
+            span: None,
+        },
+    ))
+}
+
+fn distribution(input: TokenSlice) -> IResult<TokenSlice, DistributionExpr> {
+    alt((
+        // Normal(mu, sigma)
+        map(
+            preceded(
+                token(Token::Normal),
+                delimited(
+                    token(Token::LParen),
+                    pair(terminated(expr, token(Token::Comma)), expr),
+                    token(Token::RParen),
+                ),
+            ),
+            |(mu, sigma)| DistributionExpr::Normal { mu, sigma },
+        ),
+        // LogNormal(mu, sigma)
+        map(
+            preceded(
+                token(Token::LogNormal),
+                delimited(
+                    token(Token::LParen),
+                    pair(terminated(expr, token(Token::Comma)), expr),
+                    token(Token::RParen),
+                ),
+            ),
+            |(mu, sigma)| DistributionExpr::LogNormal { mu, sigma },
+        ),
+        // Uniform(min, max)
+        map(
+            preceded(
+                token(Token::Uniform),
+                delimited(
+                    token(Token::LParen),
+                    pair(terminated(expr, token(Token::Comma)), expr),
+                    token(Token::RParen),
+                ),
+            ),
+            |(min, max)| DistributionExpr::Uniform { min, max },
+        ),
+    ))(input)
+}
+
+fn bind_params_block(input: TokenSlice) -> IResult<TokenSlice, BindParamsBlock> {
+    let (input, _) = token(Token::BindParams)(input)?;
+    let (input, _) = token(Token::LParen)(input)?;
+    let (input, param_name) = identifier(input)?;
+    let (input, _) = token(Token::RParen)(input)?;
+    let (input, _) = token(Token::LBrace)(input)?;
+    let (input, stmts) = many0(statement)(input)?;
+    let (input, _) = token(Token::RBrace)(input)?;
+
+    Ok((
+        input,
+        BindParamsBlock {
+            param_name,
+            statements: stmts,
+            span: None,
+        },
+    ))
+}
+
+fn use_measure_stmt(input: TokenSlice) -> IResult<TokenSlice, UseMeasureStmt> {
+    let (input, _) = token(Token::UseMeasure)(input)?;
+    let (input, measure_name) = identifier(input)?;
+    let (input, _) = token(Token::For)(input)?;
+    let (input, observable_name) = qualified_name(input)?;
+
+    Ok((
+        input,
+        UseMeasureStmt {
+            measure_name,
+            observable_name,
+            span: None,
+        },
+    ))
+}
+
+// ============================================================================
+// Measure definition
+// ============================================================================
+
+fn measure_def(input: TokenSlice) -> IResult<TokenSlice, MeasureDef> {
+    let (input, _) = token(Token::Measure)(input)?;
+    let (input, name) = identifier(input)?;
+    let (input, _) = token(Token::LBrace)(input)?;
+    let (input, items) = many0(measure_item)(input)?;
+    let (input, _) = token(Token::RBrace)(input)?;
+
+    Ok((
+        input,
+        MeasureDef {
+            name,
+            items,
+            span: None,
+        },
+    ))
+}
+
+fn measure_item(input: TokenSlice) -> IResult<TokenSlice, MeasureItem> {
+    alt((
+        map(
+            preceded(token(Token::Pred), preceded(token(Token::Colon), type_expr)),
+            MeasureItem::Pred,
+        ),
+        map(
+            preceded(token(Token::Obs), preceded(token(Token::Colon), type_expr)),
+            MeasureItem::Obs,
+        ),
+        map(
+            preceded(
+                token(Token::LogLikelihood),
+                preceded(token(Token::Eq), expr),
+            ),
+            MeasureItem::LogLikelihood,
+        ),
+        map(param_decl, MeasureItem::Param),
+    ))(input)
+}
+
+// ============================================================================
+// Timeline definition
+// ============================================================================
+
+fn timeline_def(input: TokenSlice) -> IResult<TokenSlice, TimelineDef> {
+    let (input, _) = token(Token::Timeline)(input)?;
+    let (input, name) = identifier(input)?;
+    let (input, _) = token(Token::LBrace)(input)?;
+    let (input, events) = many0(event)(input)?;
+    let (input, _) = token(Token::RBrace)(input)?;
+
+    Ok((
+        input,
+        TimelineDef {
+            name,
+            events,
+            span: None,
+        },
+    ))
+}
+
+fn event(input: TokenSlice) -> IResult<TokenSlice, Event> {
+    alt((
+        map(dose_event, Event::Dose),
+        map(observe_event, Event::Observe),
+    ))(input)
+}
+
+fn dose_event(input: TokenSlice) -> IResult<TokenSlice, DoseEvent> {
+    // at time_expr : dose { dose_field* }
+    let (input, _) = token(Token::At)(input)?;
+    let (input, time) = expr(input)?;
+    let (input, _) = token(Token::Colon)(input)?;
+    let (input, _) = token(Token::Dose)(input)?;
+    let (input, _) = token(Token::LBrace)(input)?;
+    let (input, fields) = many0(dose_field)(input)?;
+    let (input, _) = token(Token::RBrace)(input)?;
+
+    // Extract amount and target from fields
+    let mut amount = None;
+    let mut target = None;
+
+    for (field_name, value) in fields {
+        match field_name.as_str() {
+            "amount" => amount = Some(value),
+            "to" => {
+                // value should be a qualified name expression
+                target = match value.kind {
+                    ExprKind::QualifiedName(qn) => Some(qn),
+                    ExprKind::Ident(name) => Some(QualifiedName::simple(name)),
+                    _ => None,
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok((
+        input,
+        DoseEvent {
+            time,
+            amount: amount.unwrap_or_else(|| Expr::literal(0.0)),
+            target: target.unwrap_or_else(|| QualifiedName::simple("unknown".to_string())),
+            span: None,
+        },
+    ))
+}
+
+fn dose_field(input: TokenSlice) -> IResult<TokenSlice, (String, Expr)> {
+    // amount = expr | to = qualified_name
+    let (input, field_name) = alt((
+        value("amount".to_string(), token(Token::Amount)),
+        value("to".to_string(), token(Token::To)),
+    ))(input)?;
+    let (input, _) = token(Token::Eq)(input)?;
+    let (input, value) = expr(input)?;
+
+    Ok((input, (field_name, value)))
+}
+
+fn observe_event(input: TokenSlice) -> IResult<TokenSlice, ObserveEvent> {
+    // at time_expr : observe qualified_name
+    let (input, _) = token(Token::At)(input)?;
+    let (input, time) = expr(input)?;
+    let (input, _) = token(Token::Colon)(input)?;
+    let (input, _) = token(Token::Observe)(input)?;
+    let (input, target) = qualified_name(input)?;
+
+    Ok((
+        input,
+        ObserveEvent {
+            time,
+            target,
+            span: None,
+        },
+    ))
+}
+
+// ============================================================================
+// Cohort definition
+// ============================================================================
+
+fn cohort_def(input: TokenSlice) -> IResult<TokenSlice, CohortDef> {
+    let (input, _) = token(Token::Cohort)(input)?;
+    let (input, name) = identifier(input)?;
+    let (input, _) = token(Token::LBrace)(input)?;
+    let (input, items) = many0(cohort_item)(input)?;
+    let (input, _) = token(Token::RBrace)(input)?;
+
+    Ok((
+        input,
+        CohortDef {
+            name,
+            items,
+            span: None,
+        },
+    ))
+}
+
+fn cohort_item(input: TokenSlice) -> IResult<TokenSlice, CohortItem> {
+    alt((
+        map(cohort_population_ref, CohortItem::Population),
+        map(cohort_timeline_ref, CohortItem::Timeline),
+        map(cohort_data_file, CohortItem::DataFile),
+    ))(input)
+}
+
+fn cohort_population_ref(input: TokenSlice) -> IResult<TokenSlice, String> {
+    let (input, _) = token(Token::Population)(input)?;
+    identifier(input)
+}
+
+fn cohort_timeline_ref(input: TokenSlice) -> IResult<TokenSlice, String> {
+    let (input, _) = token(Token::Timeline)(input)?;
+    identifier(input)
+}
+
+fn cohort_data_file(input: TokenSlice) -> IResult<TokenSlice, String> {
+    let (input, _) = token(Token::DataFile)(input)?;
+    string_literal(input)
+}
+
+// ============================================================================
+// Protocol definition (Week 8: L₂ Clinical Trial DSL)
+// ============================================================================
+
+fn protocol_def(input: TokenSlice) -> IResult<TokenSlice, ProtocolDef> {
+    let (input, _) = token(Token::Protocol)(input)?;
+    let (input, name) = identifier(input)?;
+    let (input, _) = token(Token::LBrace)(input)?;
+
+    // Parse protocol items
+    let (input, population_model_name) = protocol_population_model(input)?;
+    let (input, arms) = protocol_arms_block(input)?;
+    let (input, visits) = protocol_visits_block(input)?;
+    let (input, inclusion) = opt(protocol_inclusion_block)(input)?;
+    let (input, endpoints) = protocol_endpoints_block(input)?;
+
+    let (input, decisions) =
+        opt(protocol_decisions_block)(input).map(|(i, d)| (i, d.unwrap_or_default()))?;
+
+    let (input, _) = token(Token::RBrace)(input)?;
+
+    Ok((
+        input,
+        ProtocolDef {
+            name,
+            population_model_name,
+            arms,
+            visits,
+            inclusion,
+            endpoints,
+            decisions,
+            span: None,
+        },
+    ))
+}
+
+fn protocol_population_model(input: TokenSlice) -> IResult<TokenSlice, String> {
+    let (input, _) = token(Token::Population)(input)?;
+    let (input, _) = token(Token::Model)(input)?;
+    identifier(input)
+}
+
+fn protocol_arms_block(input: TokenSlice) -> IResult<TokenSlice, Vec<ArmDef>> {
+    let (input, _) = token(Token::Arms)(input)?;
+    let (input, _) = token(Token::LBrace)(input)?;
+    let (input, arms) = many1(protocol_arm)(input)?;
+    let (input, _) = token(Token::RBrace)(input)?;
+    Ok((input, arms))
+}
+
+fn protocol_arm(input: TokenSlice) -> IResult<TokenSlice, ArmDef> {
+    let (input, name) = identifier(input)?;
+    let (input, _) = token(Token::LBrace)(input)?;
+
+    // Parse label
+    let (input, _) = token(Token::Label)(input)?;
+    let (input, _) = token(Token::Eq)(input)?;
+    let (input, label) = string_literal(input)?;
+
+    // Optional semicolon
+    let (input, _) = opt(token(Token::Semicolon))(input)?;
+
+    // Parse dose
+    let (input, _) = token(Token::Dose)(input)?;
+    let (input, _) = token(Token::Eq)(input)?;
+    let (input, dose_mg) = float_literal_value(input)?;
+
+    let (input, _) = opt(token(Token::Semicolon))(input)?;
+    let (input, _) = token(Token::RBrace)(input)?;
+
+    Ok((
+        input,
+        ArmDef {
+            name,
+            label,
+            dose_mg,
+            span: None,
+        },
+    ))
+}
+
+fn protocol_visits_block(input: TokenSlice) -> IResult<TokenSlice, Vec<VisitDef>> {
+    let (input, _) = token(Token::Visits)(input)?;
+    let (input, _) = token(Token::LBrace)(input)?;
+    let (input, visits) = many1(protocol_visit)(input)?;
+    let (input, _) = token(Token::RBrace)(input)?;
+    Ok((input, visits))
+}
+
+fn protocol_visit(input: TokenSlice) -> IResult<TokenSlice, VisitDef> {
+    let (input, name) = identifier(input)?;
+    let (input, _) = token(Token::At)(input)?;
+    let (input, time_days) = float_literal_value(input)?;
+    let (input, _) = opt(token(Token::Semicolon))(input)?;
+
+    Ok((
+        input,
+        VisitDef {
+            name,
+            time_days,
+            span: None,
+        },
+    ))
+}
+
+fn protocol_inclusion_block(input: TokenSlice) -> IResult<TokenSlice, InclusionDef> {
+    let (input, _) = token(Token::Inclusion)(input)?;
+    let (input, _) = token(Token::LBrace)(input)?;
+    let (input, clauses) = many1(protocol_inclusion_clause)(input)?;
+    let (input, _) = token(Token::RBrace)(input)?;
+
+    Ok((
+        input,
+        InclusionDef {
+            clauses,
+            span: None,
+        },
+    ))
+}
+
+fn protocol_inclusion_clause(input: TokenSlice) -> IResult<TokenSlice, InclusionClause> {
+    alt((
+        protocol_age_between,
+        protocol_ecog_in,
+        protocol_baseline_tumour_ge,
+    ))(input)
+}
+
+fn protocol_age_between(input: TokenSlice) -> IResult<TokenSlice, InclusionClause> {
+    let (input, _) = token(Token::Age)(input)?;
+    let (input, _) = token(Token::Between)(input)?;
+    let (input, min_years) = integer_literal(input)?;
+    let (input, _) = token(Token::And)(input)?;
+    let (input, max_years) = integer_literal(input)?;
+    let (input, _) = opt(token(Token::Semicolon))(input)?;
+
+    Ok((
+        input,
+        InclusionClause::AgeBetween {
+            min_years,
+            max_years,
+        },
+    ))
+}
+
+fn protocol_ecog_in(input: TokenSlice) -> IResult<TokenSlice, InclusionClause> {
+    let (input, _) = token(Token::ECOG)(input)?;
+    let (input, _) = token(Token::In)(input)?;
+    let (input, _) = token(Token::LBracket)(input)?;
+    let (input, allowed) = separated_list0(token(Token::Comma), integer_literal_u8)(input)?;
+    let (input, _) = token(Token::RBracket)(input)?;
+    let (input, _) = opt(token(Token::Semicolon))(input)?;
+
+    Ok((input, InclusionClause::ECOGIn { allowed }))
+}
+
+fn protocol_baseline_tumour_ge(input: TokenSlice) -> IResult<TokenSlice, InclusionClause> {
+    let (input, _) = token(Token::BaselineTumourVolume)(input)?;
+    let (input, _) = token(Token::Gte)(input)?;
+    let (input, volume_cm3) = float_literal_value(input)?;
+    let (input, _) = opt(token(Token::Semicolon))(input)?;
+
+    Ok((input, InclusionClause::BaselineTumourGe { volume_cm3 }))
+}
+
+fn protocol_endpoints_block(input: TokenSlice) -> IResult<TokenSlice, Vec<EndpointDef>> {
+    let (input, _) = token(Token::Endpoints)(input)?;
+    let (input, _) = token(Token::LBrace)(input)?;
+    let (input, endpoints) = many1(protocol_endpoint)(input)?;
+    let (input, _) = token(Token::RBrace)(input)?;
+    Ok((input, endpoints))
+}
+
+fn protocol_endpoint(input: TokenSlice) -> IResult<TokenSlice, EndpointDef> {
+    let (input, name) = identifier(input)?;
+    let (input, _) = token(Token::LBrace)(input)?;
+
+    // Parse type
+    let (input, _) = token(Token::Type)(input)?;
+    let (input, _) = token(Token::Eq)(input)?;
+    let (input, endpoint_type) = string_literal(input)?;
+    let (input, _) = opt(token(Token::Semicolon))(input)?;
+
+    // Parse endpoint-specific fields based on type
+    let (input, spec) = if endpoint_type == "binary" {
+        protocol_endpoint_orr(input)?
+    } else if endpoint_type == "time_to_event" {
+        protocol_endpoint_pfs(input)?
+    } else {
+        return Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Alt,
+        )));
+    };
+
+    let (input, _) = token(Token::RBrace)(input)?;
+
+    Ok((
+        input,
+        EndpointDef {
+            name,
+            kind: if endpoint_type == "binary" {
+                EndpointKind::Binary
+            } else {
+                EndpointKind::TimeToEvent
+            },
+            spec,
+            span: None,
+        },
+    ))
+}
+
+fn protocol_endpoint_orr(input: TokenSlice) -> IResult<TokenSlice, EndpointSpec> {
+    // observable
+    let (input, _) = token(Token::Observable)(input)?;
+    let (input, _) = token(Token::Eq)(input)?;
+    let (input, observable) = identifier(input)?;
+    let (input, _) = opt(token(Token::Semicolon))(input)?;
+
+    // shrink_frac
+    let (input, _) = token(Token::ShrinkFrac)(input)?;
+    let (input, _) = token(Token::Eq)(input)?;
+    let (input, shrink_fraction) = float_literal_value(input)?;
+    let (input, _) = opt(token(Token::Semicolon))(input)?;
+
+    // window
+    let (input, _) = token(Token::Window)(input)?;
+    let (input, _) = token(Token::Eq)(input)?;
+    let (input, _) = token(Token::LBracket)(input)?;
+    let (input, window_start) = float_literal_value(input)?;
+    let (input, _) = token(Token::Comma)(input)?;
+    let (input, window_end) = float_literal_value(input)?;
+    let (input, _) = token(Token::RBracket)(input)?;
+    let (input, _) = opt(token(Token::Semicolon))(input)?;
+
+    Ok((
+        input,
+        EndpointSpec::ResponseRate {
+            observable,
+            shrink_fraction,
+            window_start_days: window_start,
+            window_end_days: window_end,
+        },
+    ))
+}
+
+fn protocol_endpoint_pfs(input: TokenSlice) -> IResult<TokenSlice, EndpointSpec> {
+    // observable
+    let (input, _) = token(Token::Observable)(input)?;
+    let (input, _) = token(Token::Eq)(input)?;
+    let (input, observable) = identifier(input)?;
+    let (input, _) = opt(token(Token::Semicolon))(input)?;
+
+    // progression_frac
+    let (input, _) = token(Token::ProgressionFrac)(input)?;
+    let (input, _) = token(Token::Eq)(input)?;
+    let (input, progression_frac) = float_literal_value(input)?;
+    let (input, _) = opt(token(Token::Semicolon))(input)?;
+
+    // ref_baseline
+    let (input, _) = token(Token::RefBaseline)(input)?;
+    let (input, _) = token(Token::Eq)(input)?;
+    let (input, ref_baseline) = boolean_literal(input)?;
+    let (input, _) = opt(token(Token::Semicolon))(input)?;
+
+    // window
+    let (input, _) = token(Token::Window)(input)?;
+    let (input, _) = token(Token::Eq)(input)?;
+    let (input, _) = token(Token::LBracket)(input)?;
+    let (input, window_start) = float_literal_value(input)?;
+    let (input, _) = token(Token::Comma)(input)?;
+    let (input, window_end) = float_literal_value(input)?;
+    let (input, _) = token(Token::RBracket)(input)?;
+    let (input, _) = opt(token(Token::Semicolon))(input)?;
+
+    Ok((
+        input,
+        EndpointSpec::TimeToProgression {
+            observable,
+            increase_fraction: progression_frac,
+            window_start_days: window_start,
+            window_end_days: window_end,
+            ref_baseline,
+        },
+    ))
+}
+
+// ============================================================================
+// Decisions block
+// ============================================================================
+
+fn protocol_decisions_block(input: TokenSlice) -> IResult<TokenSlice, Vec<DecisionDef>> {
+    let (input, _) = token(Token::Decisions)(input)?;
+    let (input, _) = token(Token::LBrace)(input)?;
+    let (input, decisions) = many1(protocol_decision)(input)?;
+    let (input, _) = token(Token::RBrace)(input)?;
+    Ok((input, decisions))
+}
+
+fn protocol_decision(input: TokenSlice) -> IResult<TokenSlice, DecisionDef> {
+    let (input, name) = identifier(input)?;
+    let (input, _) = token(Token::LBrace)(input)?;
+
+    // Parse endpoint
+    let (input, _) = token(Token::Endpoint)(input)?;
+    let (input, _) = token(Token::Eq)(input)?;
+    let (input, endpoint_name) = identifier(input)?;
+    let (input, _) = token(Token::Semicolon)(input)?;
+
+    // Parse compare (e.g., "ArmB > ArmA" or "ArmA > ArmB")
+    let (input, _) = token(Token::Compare)(input)?;
+    let (input, _) = token(Token::Eq)(input)?;
+    let (input, arm_right) = identifier(input)?;
+    let (input, _) = token(Token::Gt)(input)?;
+    let (input, arm_left) = identifier(input)?;
+    let (input, _) = token(Token::Semicolon)(input)?;
+    // Note: "ArmB > ArmA" means RightBetter (arm_right beats arm_left)
+
+    // Parse margin
+    let (input, _) = token(Token::Margin)(input)?;
+    let (input, _) = token(Token::Eq)(input)?;
+    let (input, margin) = float_literal_value(input)?;
+    let (input, _) = token(Token::Semicolon)(input)?;
+
+    // Parse prob_threshold
+    let (input, _) = token(Token::ProbThreshold)(input)?;
+    let (input, _) = token(Token::Eq)(input)?;
+    let (input, prob_threshold) = float_literal_value(input)?;
+    let (input, _) = token(Token::Semicolon)(input)?;
+
+    let (input, _) = token(Token::RBrace)(input)?;
+
+    Ok((
+        input,
+        DecisionDef {
+            name,
+            endpoint_name,
+            arm_left,
+            arm_right,
+            margin,
+            prob_threshold,
+            direction: DecisionDirection::RightBetter,
+            span: None,
+        },
+    ))
+}
+
+// ============================================================================
+// Type expressions
+// ============================================================================
+
+fn type_expr(input: TokenSlice) -> IResult<TokenSlice, TypeExpr> {
+    alt((
+        // Quantity<unit, scalar>
+        map(
+            preceded(
+                token(Token::Quantity),
+                delimited(
+                    token(Token::Lt),
+                    pair(terminated(unit_expr, token(Token::Comma)), type_expr),
+                    token(Token::Gt),
+                ),
+            ),
+            |(unit, ty)| TypeExpr::Quantity(unit, Box::new(ty)),
+        ),
+        // Built-in unit types
+        map(unit_type, TypeExpr::Unit),
+        // f64 type
+        value(TypeExpr::Simple("f64".to_string()), token(Token::F64)),
+        // Simple types (identifiers)
+        map(identifier, TypeExpr::Simple),
+    ))(input)
+}
+
+fn unit_type(input: TokenSlice) -> IResult<TokenSlice, UnitType> {
+    alt((
+        value(UnitType::Mass, token(Token::Mass)),
+        value(UnitType::Volume, token(Token::Volume)),
+        value(UnitType::Time, token(Token::Time)),
+        value(UnitType::DoseMass, token(Token::DoseMass)),
+        value(UnitType::ConcMass, token(Token::ConcMass)),
+        value(UnitType::Clearance, token(Token::Clearance)),
+        value(UnitType::RateConst, token(Token::RateConst)),
+        value(UnitType::TumourVolume, token(Token::TumourVolume)),
+    ))(input)
+}
+
+fn unit_expr(input: TokenSlice) -> IResult<TokenSlice, UnitExpr> {
+    // For now, just parse simple named units
+    // TODO: implement product/quotient parsing
+    map(identifier, UnitExpr::Named)(input)
+}
+
+// ============================================================================
+// Statements
+// ============================================================================
+
+fn statement(input: TokenSlice) -> IResult<TokenSlice, Statement> {
+    alt((let_statement, assign_statement, expr_statement))(input)
+}
+
+fn let_statement(input: TokenSlice) -> IResult<TokenSlice, Statement> {
+    let (input, _) = token(Token::Let)(input)?;
+    let (input, name) = identifier(input)?;
+    let (input, _) = token(Token::Eq)(input)?;
+    let (input, value) = expr(input)?;
+
+    Ok((
+        input,
+        Statement::Let {
+            name,
+            value,
+            span: None,
+        },
+    ))
+}
+
+fn assign_statement(input: TokenSlice) -> IResult<TokenSlice, Statement> {
+    let (input, target) = qualified_name(input)?;
+    let (input, _) = token(Token::Eq)(input)?;
+    let (input, value) = expr(input)?;
+
+    Ok((
+        input,
+        Statement::Assign {
+            target,
+            value,
+            span: None,
+        },
+    ))
+}
+
+fn expr_statement(input: TokenSlice) -> IResult<TokenSlice, Statement> {
+    map(expr, Statement::Expr)(input)
+}
+
+// ============================================================================
+// Expressions (with precedence)
+// ============================================================================
+
+fn expr(input: TokenSlice) -> IResult<TokenSlice, Expr> {
+    comparison(input)
+}
+
+fn comparison(input: TokenSlice) -> IResult<TokenSlice, Expr> {
+    let (input, first) = additive(input)?;
+    let (input, op_expr) = opt(pair(comparison_op, additive))(input)?;
+
+    if let Some((op, right)) = op_expr {
+        Ok((
+            input,
+            Expr {
+                kind: ExprKind::Binary(op, Box::new(first), Box::new(right)),
+                span: None,
+            },
+        ))
+    } else {
+        Ok((input, first))
+    }
+}
+
+fn comparison_op(input: TokenSlice) -> IResult<TokenSlice, BinaryOp> {
+    alt((
+        value(BinaryOp::Eq, token(Token::EqEq)),
+        value(BinaryOp::Ne, token(Token::NotEq)),
+        value(BinaryOp::Lt, token(Token::Lt)),
+        value(BinaryOp::Gt, token(Token::Gt)),
+    ))(input)
+}
+
+fn additive(input: TokenSlice) -> IResult<TokenSlice, Expr> {
+    let (input, first) = multiplicative(input)?;
+    let (input, rest) = many0(pair(additive_op, multiplicative))(input)?;
+
+    Ok((input, fold_binary(first, rest)))
+}
+
+fn additive_op(input: TokenSlice) -> IResult<TokenSlice, BinaryOp> {
+    alt((
+        value(BinaryOp::Add, token(Token::Plus)),
+        value(BinaryOp::Sub, token(Token::Minus)),
+    ))(input)
+}
+
+fn multiplicative(input: TokenSlice) -> IResult<TokenSlice, Expr> {
+    let (input, first) = power(input)?;
+    let (input, rest) = many0(pair(multiplicative_op, power))(input)?;
+
+    Ok((input, fold_binary(first, rest)))
+}
+
+fn multiplicative_op(input: TokenSlice) -> IResult<TokenSlice, BinaryOp> {
+    alt((
+        value(BinaryOp::Mul, token(Token::Star)),
+        value(BinaryOp::Div, token(Token::Slash)),
+    ))(input)
+}
+
+fn power(input: TokenSlice) -> IResult<TokenSlice, Expr> {
+    let (input, first) = unary(input)?;
+    let (input, op_expr) = opt(pair(token(Token::Caret), power))(input)?;
+
+    if let Some((_, right)) = op_expr {
+        Ok((
+            input,
+            Expr {
+                kind: ExprKind::Binary(BinaryOp::Pow, Box::new(first), Box::new(right)),
+                span: None,
+            },
+        ))
+    } else {
+        Ok((input, first))
+    }
+}
+
+fn unary(input: TokenSlice) -> IResult<TokenSlice, Expr> {
+    alt((
+        map(
+            pair(
+                alt((
+                    value(UnaryOp::Neg, token(Token::Minus)),
+                    value(UnaryOp::Pos, token(Token::Plus)),
+                )),
+                unary,
+            ),
+            |(op, operand)| Expr {
+                kind: ExprKind::Unary(op, Box::new(operand)),
+                span: None,
+            },
+        ),
+        primary,
+    ))(input)
+}
+
+fn primary(input: TokenSlice) -> IResult<TokenSlice, Expr> {
+    alt((
+        map(literal, |lit| Expr {
+            kind: ExprKind::Literal(lit),
+            span: None,
+        }),
+        map(function_call, |(name, args)| Expr {
+            kind: ExprKind::Call(name, args),
+            span: None,
+        }),
+        map(qualified_name, |qn| Expr {
+            kind: ExprKind::QualifiedName(qn),
+            span: None,
+        }),
+        delimited(token(Token::LParen), expr, token(Token::RParen)),
+    ))(input)
+}
+
+fn function_call(input: TokenSlice) -> IResult<TokenSlice, (String, Vec<Argument>)> {
+    let (input, name) = identifier(input)?;
+    let (input, _) = token(Token::LParen)(input)?;
+    let (input, args) = separated_list0(token(Token::Comma), argument)(input)?;
+    let (input, _) = token(Token::RParen)(input)?;
+
+    Ok((input, (name, args)))
+}
+
+fn argument(input: TokenSlice) -> IResult<TokenSlice, Argument> {
+    // Try named argument first (name = value)
+    if let Ok((remaining, (name, _, value))) = nom::sequence::tuple::<
+        _,
+        _,
+        nom::error::Error<TokenSlice>,
+        _,
+    >((identifier, token(Token::Eq), expr))(input)
+    {
+        return Ok((
+            remaining,
+            Argument {
+                name: Some(name),
+                value,
+            },
+        ));
+    }
+
+    // Otherwise, positional argument
+    map(expr, |value| Argument { name: None, value })(input)
+}
+
+fn qualified_name(input: TokenSlice) -> IResult<TokenSlice, QualifiedName> {
+    let (input, first) = identifier(input)?;
+    let (input, rest) = many0(preceded(token(Token::Dot), identifier))(input)?;
+
+    let mut parts = vec![first];
+    parts.extend(rest);
+
+    Ok((input, QualifiedName::new(parts)))
+}
+
+// ============================================================================
+// Literals
+// ============================================================================
+
+fn literal(input: TokenSlice) -> IResult<TokenSlice, Literal> {
+    alt((unit_literal, float_literal))(input)
+}
+
+fn float_literal(input: TokenSlice) -> IResult<TokenSlice, Literal> {
+    match input.get(0) {
+        Some((Token::Float(val), _, _)) => {
+            let val = *val;
+            Ok((&input[1..], Literal::Float(val)))
+        }
+        _ => Err(Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        ))),
+    }
+}
+
+fn float_literal_value(input: TokenSlice) -> IResult<TokenSlice, f64> {
+    match input.get(0) {
+        Some((Token::Float(val), _, _)) => {
+            let val = *val;
+            Ok((&input[1..], val))
+        }
+        _ => Err(Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        ))),
+    }
+}
+
+fn integer_literal(input: TokenSlice) -> IResult<TokenSlice, u32> {
+    match input.get(0) {
+        Some((Token::Float(val), _, _)) => {
+            let val = *val as u32;
+            Ok((&input[1..], val))
+        }
+        _ => Err(Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        ))),
+    }
+}
+
+fn integer_literal_u8(input: TokenSlice) -> IResult<TokenSlice, u8> {
+    match input.get(0) {
+        Some((Token::Float(val), _, _)) => {
+            let val = *val as u8;
+            Ok((&input[1..], val))
+        }
+        _ => Err(Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        ))),
+    }
+}
+
+fn boolean_literal(input: TokenSlice) -> IResult<TokenSlice, bool> {
+    alt((
+        value(true, token(Token::True)),
+        value(false, token(Token::False)),
+    ))(input)
+}
+
+fn unit_literal(input: TokenSlice) -> IResult<TokenSlice, Literal> {
+    match input.get(0) {
+        Some((Token::UnitLiteral(UnitLiteralValue { value, unit }), _, _)) => {
+            let val = *value;
+            let u = unit.clone();
+            Ok((
+                &input[1..],
+                Literal::UnitFloat {
+                    value: val,
+                    unit: u,
+                },
+            ))
+        }
+        _ => Err(Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        ))),
+    }
+}
+
+fn string_literal(input: TokenSlice) -> IResult<TokenSlice, String> {
+    match input.get(0) {
+        Some((Token::String(s), _, _)) => {
+            let s = s.clone();
+            Ok((&input[1..], s))
+        }
+        _ => Err(Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        ))),
+    }
+}
+
+// ============================================================================
+// Utilities
+// ============================================================================
+
+fn identifier(input: TokenSlice) -> IResult<TokenSlice, String> {
+    match input.get(0) {
+        Some((Token::Ident(name), _, _)) => {
+            let name = name.clone();
+            Ok((&input[1..], name))
+        }
+        // Allow certain keywords as identifiers in expressions and qualified names
+        Some((Token::Model, _, _)) => Ok((&input[1..], "model".to_string())),
+        Some((Token::Population, _, _)) => Ok((&input[1..], "population".to_string())),
+        Some((Token::Measure, _, _)) => Ok((&input[1..], "measure".to_string())),
+        Some((Token::Pred, _, _)) => Ok((&input[1..], "pred".to_string())),
+        Some((Token::Obs, _, _)) => Ok((&input[1..], "obs".to_string())),
+        _ => Err(Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        ))),
+    }
+}
+
+fn token(expected: Token) -> impl Fn(TokenSlice) -> IResult<TokenSlice, ()> {
+    move |input: TokenSlice| match input.get(0) {
+        Some((tok, _, _)) if tok == &expected => Ok((&input[1..], ())),
+        _ => Err(Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        ))),
+    }
+}
+
+/// Helper to fold binary operations with same precedence (left-associative)
+fn fold_binary(first: Expr, rest: Vec<(BinaryOp, Expr)>) -> Expr {
+    rest.into_iter().fold(first, |acc, (op, right)| Expr {
+        kind: ExprKind::Binary(op, Box::new(acc), Box::new(right)),
+        span: None,
+    })
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::tokenize;
+
+    #[test]
+    fn test_parse_literal_expressions() {
+        let tokens = tokenize("3.14").unwrap();
+        let (_, e) = expr(&tokens).unwrap();
+        assert!(matches!(e.kind, ExprKind::Literal(Literal::Float(_))));
+
+        let tokens = tokenize("100.0_mg").unwrap();
+        let (_, e) = expr(&tokens).unwrap();
+        match e.kind {
+            ExprKind::Literal(Literal::UnitFloat { value, unit }) => {
+                assert_eq!(value, 100.0);
+                assert_eq!(unit, "mg");
+            }
+            _ => panic!("Expected unit literal"),
+        }
+    }
+
+    #[test]
+    fn test_parse_binary_expressions() {
+        let tokens = tokenize("1.0 + 2.0").unwrap();
+        let (_, e) = expr(&tokens).unwrap();
+        match e.kind {
+            ExprKind::Binary(BinaryOp::Add, _, _) => {}
+            _ => panic!("Expected binary add"),
+        }
+
+        let tokens = tokenize("a * b + c").unwrap();
+        let (_, e) = expr(&tokens).unwrap();
+        // Should be: (a * b) + c
+        match e.kind {
+            ExprKind::Binary(BinaryOp::Add, left, _) => match left.kind {
+                ExprKind::Binary(BinaryOp::Mul, _, _) => {}
+                _ => panic!("Expected left to be multiply"),
+            },
+            _ => panic!("Expected top-level add"),
+        }
+    }
+
+    #[test]
+    fn test_parse_function_call() {
+        let tokens = tokenize("exp(x)").unwrap();
+        let (_, e) = expr(&tokens).unwrap();
+        match e.kind {
+            ExprKind::Call(name, args) => {
+                assert_eq!(name, "exp");
+                assert_eq!(args.len(), 1);
+            }
+            _ => panic!("Expected function call"),
+        }
+
+        let tokens = tokenize("pow(w, 0.75)").unwrap();
+        let (_, e) = expr(&tokens).unwrap();
+        match e.kind {
+            ExprKind::Call(name, args) => {
+                assert_eq!(name, "pow");
+                assert_eq!(args.len(), 2);
+            }
+            _ => panic!("Expected function call"),
+        }
+    }
+
+    #[test]
+    fn test_parse_qualified_name() {
+        let tokens = tokenize("model.CL").unwrap();
+        let (_, qn) = qualified_name(&tokens).unwrap();
+        assert_eq!(qn.parts, vec!["model".to_string(), "CL".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_state_decl() {
+        let tokens = tokenize("state A_gut : DoseMass").unwrap();
+        let (_, s) = state_decl(&tokens).unwrap();
+        assert_eq!(s.name, "A_gut");
+        match s.ty {
+            TypeExpr::Unit(UnitType::DoseMass) => {}
+            _ => panic!("Expected DoseMass type"),
+        }
+    }
+
+    #[test]
+    fn test_parse_ode_equation() {
+        let tokens = tokenize("dA_gut/dt = -Ka * A_gut").unwrap();
+        let (_, ode) = ode_equation(&tokens).unwrap();
+        assert_eq!(ode.state_name, "A_gut");
+        // The RHS is: -(Ka * A_gut), which should be Unary(Neg, Binary(Mul, ...))
+        // But due to precedence, it could also be Binary(Mul, Unary(Neg, Ka), A_gut)
+        // Actually, our parser has unary > multiplicative, so it should be the latter
+        match &ode.rhs.kind {
+            ExprKind::Binary(BinaryOp::Mul, left, _right) => match &left.kind {
+                ExprKind::Unary(UnaryOp::Neg, _) => {}
+                _ => panic!("Expected negation on left side of multiplication"),
+            },
+            _ => panic!("Expected multiplication on RHS, got {:?}", ode.rhs.kind),
+        }
+    }
+
+    #[test]
+    fn test_parse_observable_decl() {
+        let tokens = tokenize("obs C_plasma : ConcMass = A_central / V").unwrap();
+        let (_, obs) = observable_decl(&tokens).unwrap();
+        assert_eq!(obs.name, "C_plasma");
+        match obs.ty {
+            TypeExpr::Unit(UnitType::ConcMass) => {}
+            _ => panic!("Expected ConcMass type"),
+        }
+        match obs.expr.kind {
+            ExprKind::Binary(BinaryOp::Div, _, _) => {}
+            _ => panic!("Expected division"),
+        }
+    }
+
+    #[test]
+    fn test_parse_simple_model() {
+        let source = r#"
+model OneCompOral {
+    state A_gut : DoseMass
+    state A_central : DoseMass
+    param Ka : RateConst
+    dA_gut/dt = -Ka * A_gut
+    obs C_plasma : ConcMass = A_central / V
+}
+        "#;
+
+        let tokens = tokenize(source).unwrap();
+        let result = model_def(&tokens);
+        assert!(result.is_ok());
+        let (_, model) = result.unwrap();
+        assert_eq!(model.name, "OneCompOral");
+        assert_eq!(model.items.len(), 5);
+    }
+
+    #[test]
+    fn test_parse_rand_effect() {
+        let tokens = tokenize("rand eta_CL : f64 ~ Normal(0.0, omega_CL)").unwrap();
+        let (_, re) = rand_effect_decl(&tokens).unwrap();
+        assert_eq!(re.name, "eta_CL");
+        match re.ty {
+            TypeExpr::Simple(s) => assert_eq!(s, "f64"),
+            _ => panic!("Expected f64 type"),
+        }
+        match re.dist {
+            DistributionExpr::Normal { .. } => {}
+            _ => panic!("Expected Normal distribution"),
+        }
+    }
+
+    #[test]
+    fn test_parse_bind_params_block() {
+        let source = r#"
+bind_params(patient) {
+    let w = patient.WT / 70.0_kg
+    model.CL = CL_pop * pow(w, 0.75)
+}
+        "#;
+
+        let tokens = tokenize(source).unwrap();
+        let (_, block) = bind_params_block(&tokens).unwrap();
+        assert_eq!(block.param_name, "patient");
+        assert_eq!(block.statements.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_complete_program() {
+        let source = r#"
+model OneCompOral {
+    state A_gut : DoseMass
+    param Ka : RateConst
+    dA_gut/dt = -Ka * A_gut
+}
+
+population TestPop {
+    model OneCompOral
+    param CL_pop : Clearance
+    rand eta_CL : f64 ~ Normal(0.0, 0.3)
+}
+        "#;
+
+        let tokens = tokenize(source).unwrap();
+        let result = parse_program(&tokens);
+        assert!(result.is_ok());
+        let prog = result.unwrap();
+        assert_eq!(prog.declarations.len(), 2);
+    }
+}

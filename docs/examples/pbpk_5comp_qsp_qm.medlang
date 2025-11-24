@@ -1,0 +1,226 @@
+// 5-Compartment PBPK + Tumor QSP with Quantum-Informed Kp
+// Week 7: Complete Track C → PBPK → QSP integration
+
+model PBPK_5Comp_TumorQSP {
+    // =========================================================================
+    // PBPK States (5 compartments)
+    // =========================================================================
+    state A_plasma : DoseMass    // Central blood compartment
+    state A_tumor  : DoseMass    // Tumor tissue (target)
+    state A_liver  : DoseMass    // Liver (metabolism)
+    state A_kidney : DoseMass    // Kidney (excretion)
+    state A_rest   : DoseMass    // Rest of body
+
+    // QSP State
+    state TumourSize : TumourVolume  // Tumor volume (mm³ or cm³)
+
+    // =========================================================================
+    // PBPK Parameters - Volumes
+    // =========================================================================
+    param V_plasma : Volume
+    param V_tumor  : Volume
+    param V_liver  : Volume
+    param V_kidney : Volume
+    param V_rest   : Volume
+
+    // =========================================================================
+    // PBPK Parameters - Blood Flows
+    // =========================================================================
+    param Q_tumor  : Clearance  // Blood flow to tumor [L/h]
+    param Q_liver  : Clearance  // Blood flow to liver [L/h]
+    param Q_kidney : Clearance  // Blood flow to kidney [L/h]
+    param Q_rest   : Clearance  // Blood flow to rest [L/h]
+
+    // =========================================================================
+    // PBPK Parameters - Partition Coefficients
+    // =========================================================================
+    param Kp_tumor  : f64  // Tumor:plasma (QM-informed!)
+    param Kp_liver  : f64  // Liver:plasma
+    param Kp_kidney : f64  // Kidney:plasma
+    param Kp_rest   : f64  // Rest:plasma
+
+    // =========================================================================
+    // PBPK Parameters - Clearance
+    // =========================================================================
+    param CL_renal : Clearance  // Renal clearance [L/h]
+
+    // =========================================================================
+    // QSP Parameters
+    // =========================================================================
+    param k_grow : RateConst      // Tumor growth rate [1/h]
+    param T_max  : TumourVolume   // Tumor carrying capacity
+    param Emax   : f64            // Maximum drug effect (dimensionless)
+    param EC50   : ConcMass       // Half-maximal effect concentration
+
+    // =========================================================================
+    // Intermediate Concentrations (let bindings)
+    // =========================================================================
+    // Plasma concentration
+    let C_plasma = A_plasma / V_plasma
+
+    // Tissue concentrations (total)
+    let C_tumor_tissue  = A_tumor  / V_tumor
+    let C_liver_tissue  = A_liver  / V_liver
+    let C_kidney_tissue = A_kidney / V_kidney
+    let C_rest_tissue   = A_rest   / V_rest
+
+    // Venous concentrations (unbound, equilibrated with plasma)
+    let C_tumor_vein  = C_tumor_tissue  / Kp_tumor
+    let C_liver_vein  = C_liver_tissue  / Kp_liver
+    let C_kidney_vein = C_kidney_tissue / Kp_kidney
+    let C_rest_vein   = C_rest_tissue   / Kp_rest
+
+    // =========================================================================
+    // PBPK ODEs (Mass Balance)
+    // =========================================================================
+    // Plasma: receives venous return from all tissues, loses to renal clearance
+    dA_plasma/dt = Q_tumor  * (C_tumor_vein  - C_plasma)
+                 + Q_liver  * (C_liver_vein  - C_plasma)
+                 + Q_kidney * (C_kidney_vein - C_plasma)
+                 + Q_rest   * (C_rest_vein   - C_plasma)
+                 - CL_renal * C_plasma
+
+    // Tissue compartments: arterial input minus venous output
+    dA_tumor/dt  = Q_tumor  * (C_plasma - C_tumor_vein)
+    dA_liver/dt  = Q_liver  * (C_plasma - C_liver_vein)
+    dA_kidney/dt = Q_kidney * (C_plasma - C_kidney_vein)
+    dA_rest/dt   = Q_rest   * (C_plasma - C_rest_vein)
+
+    // =========================================================================
+    // QSP ODE (Tumor Growth-Kill)
+    // =========================================================================
+    // Key innovation: C_tumor_tissue (not Kp*C_plasma) drives PD
+    dTumourSize/dt = k_grow * TumourSize * (1.0 - TumourSize / T_max)
+                   - (Emax * C_tumor_tissue / (EC50 + C_tumor_tissue)) * TumourSize
+
+    // =========================================================================
+    // Observables
+    // =========================================================================
+    obs C_plasma_obs : ConcMass = C_plasma
+    obs C_tumor_obs : ConcMass = C_tumor_tissue
+    obs TumourVol : TumourVolume = TumourSize
+}
+
+// =============================================================================
+// Population Model with Allometric Scaling and QM Integration
+// =============================================================================
+population PBPK_5Comp_QSP_Pop {
+    model PBPK_5Comp_TumorQSP
+
+    // -------------------------------------------------------------------------
+    // Reference Physiological Parameters (70 kg human)
+    // -------------------------------------------------------------------------
+    // Volumes [L]
+    param V_plasma_ref : Volume
+    param V_tumor_ref  : Volume
+    param V_liver_ref  : Volume
+    param V_kidney_ref : Volume
+    param V_rest_ref   : Volume
+
+    // Blood flows [L/h]
+    param Q_tumor_ref  : Clearance
+    param Q_liver_ref  : Clearance
+    param Q_kidney_ref : Clearance
+    param Q_rest_ref   : Clearance
+    param CL_renal_ref : Clearance
+
+    // -------------------------------------------------------------------------
+    // Partition Coefficients (Population)
+    // -------------------------------------------------------------------------
+    // Kp_tumor comes from QM stub (external constant)
+    // Other Kps are estimated
+    param Kp_liver_pop  : f64
+    param Kp_kidney_pop : f64
+    param Kp_rest_pop   : f64
+
+    // IIV on partition coefficients
+    param omega_Kp_liver  : f64
+    param omega_Kp_kidney : f64
+    param omega_Kp_rest   : f64
+
+    rand eta_Kp_liver  : f64 ~ Normal(0.0, omega_Kp_liver)
+    rand eta_Kp_kidney : f64 ~ Normal(0.0, omega_Kp_kidney)
+    rand eta_Kp_rest   : f64 ~ Normal(0.0, omega_Kp_rest)
+
+    // -------------------------------------------------------------------------
+    // QSP Population Parameters
+    // -------------------------------------------------------------------------
+    param k_grow_pop : RateConst
+    param T_max_pop  : TumourVolume
+    param Emax_pop   : f64
+
+    // EC50 is QM-informed (uses Kd_QM from stub)
+    param alpha_EC50 : f64
+
+    // IIV on QSP parameters
+    param omega_EC50  : f64
+    param omega_Emax  : f64
+    param omega_kgrow : f64
+
+    rand eta_EC50  : f64 ~ Normal(0.0, omega_EC50)
+    rand eta_Emax  : f64 ~ Normal(0.0, omega_Emax)
+    rand eta_kgrow : f64 ~ Normal(0.0, omega_kgrow)
+
+    // -------------------------------------------------------------------------
+    // Covariate
+    // -------------------------------------------------------------------------
+    input WT : Mass  // Body weight for allometric scaling
+
+    // -------------------------------------------------------------------------
+    // Individual Parameter Mapping
+    // -------------------------------------------------------------------------
+    bind_params(patient) {
+        // Allometric scaling factor
+        let w = patient.WT / 70.0_kg
+
+        // Volumes scale linearly with weight (exponent = 1.0)
+        model.V_plasma = V_plasma_ref * w
+        model.V_tumor  = V_tumor_ref  * w
+        model.V_liver  = V_liver_ref  * w
+        model.V_kidney = V_kidney_ref * w
+        model.V_rest   = V_rest_ref   * w
+
+        // Blood flows scale with exponent = 0.75
+        model.Q_tumor  = Q_tumor_ref  * pow(w, 0.75)
+        model.Q_liver  = Q_liver_ref  * pow(w, 0.75)
+        model.Q_kidney = Q_kidney_ref * pow(w, 0.75)
+        model.Q_rest   = Q_rest_ref   * pow(w, 0.75)
+        model.CL_renal = CL_renal_ref * pow(w, 0.75)
+
+        // Partition coefficients
+        // Kp_tumor: QUANTUM-INFORMED from stub (no IIV for now)
+        model.Kp_tumor  = Kp_tumor_QM  // External constant from QM stub
+
+        // Other Kps: estimated with IIV
+        model.Kp_liver  = Kp_liver_pop  * exp(eta_Kp_liver)
+        model.Kp_kidney = Kp_kidney_pop * exp(eta_Kp_kidney)
+        model.Kp_rest   = Kp_rest_pop   * exp(eta_Kp_rest)
+
+        // QSP parameters
+        model.k_grow = k_grow_pop * exp(eta_kgrow)
+        model.T_max  = T_max_pop
+        model.Emax   = Emax_pop * exp(eta_Emax)
+
+        // EC50: QUANTUM-INFORMED from Kd in stub
+        model.EC50 = alpha_EC50 * Kd_QM * exp(eta_EC50)
+    }
+
+    // Bind measurement models to observables
+    use_measure PlasmaError for model.C_plasma_obs
+}
+
+// =============================================================================
+// Measurement Model (Plasma Concentration)
+// =============================================================================
+measure PlasmaError {
+    pred : ConcMass
+    obs  : ConcMass
+
+    param sigma_prop : f64
+
+    log_likelihood = Normal_logpdf(
+        x  = (obs / pred) - 1.0,
+        mu = 0.0,
+        sd = sigma_prop
+    )
+}

@@ -1,0 +1,158 @@
+// Simplified PK-QSP Oncology Model (Inline Version)
+// Combines 1-compartment oral PK with tumor growth-kill model
+// Week 5 - Proof of concept for multi-state, multi-observable models
+
+model PK_QSP_Inline {
+    // =========================================================================
+    // PK States (1-compartment oral)
+    // =========================================================================
+    state A_gut : DoseMass      // Drug in gut compartment
+    state A_central : DoseMass  // Drug in central compartment
+
+    // =========================================================================
+    // QSP States (Tumor)
+    // =========================================================================
+    state Tumour : TumourVolume // Tumor volume (mm³)
+
+    // =========================================================================
+    // PK Parameters
+    // =========================================================================
+    param Ka : RateConst        // Absorption rate constant [1/h]
+    param CL : Clearance        // Clearance [L/h]
+    param V  : Volume           // Volume of distribution [L]
+
+    // =========================================================================
+    // QSP Parameters
+    // =========================================================================
+    param k_grow : RateConst    // Tumor growth rate [1/h]
+    param T_max  : TumourVolume // Tumor carrying capacity [mm³]
+    param Emax   : f64          // Maximum drug effect (dimensionless)
+    param EC50   : ConcMass     // Concentration at half-maximal effect [mg/L]
+
+    // =========================================================================
+    // PK ODEs
+    // =========================================================================
+    dA_gut/dt     = -Ka * A_gut
+    dA_central/dt =  Ka * A_gut - (CL / V) * A_central
+
+    // =========================================================================
+    // QSP ODE with PK-PD coupling
+    // =========================================================================
+    // Drug effect: Emax model with inline C_plasma = A_central / V
+    // Tumor dynamics: logistic growth minus drug-induced kill
+
+    dTumour/dt = k_grow * Tumour * (1.0 - Tumour / T_max)
+                 - (Emax * (A_central / V) / (EC50 + (A_central / V))) * Tumour
+
+    // =========================================================================
+    // Observables (Multiple)
+    // =========================================================================
+    obs C_plasma : ConcMass = A_central / V
+    obs TumourVol : TumourVolume = Tumour
+}
+
+// =============================================================================
+// Population Model (NLME structure)
+// =============================================================================
+population PK_QSP_Pop {
+    model PK_QSP_Inline
+
+    // -------------------------------------------------------------------------
+    // PK Population Parameters
+    // -------------------------------------------------------------------------
+    param CL_pop : Clearance
+    param V_pop  : Volume
+    param Ka_pop : RateConst
+
+    // -------------------------------------------------------------------------
+    // QSP Population Parameters
+    // -------------------------------------------------------------------------
+    param k_grow_pop : RateConst
+    param T_max_pop  : TumourVolume
+    param Emax_pop   : f64
+    param EC50_pop   : ConcMass
+
+    // -------------------------------------------------------------------------
+    // PK Inter-Individual Variability (IIV)
+    // -------------------------------------------------------------------------
+    param omega_CL : f64
+    param omega_V  : f64
+    param omega_Ka : f64
+
+    rand eta_CL : f64 ~ Normal(0.0, omega_CL)
+    rand eta_V  : f64 ~ Normal(0.0, omega_V)
+    rand eta_Ka : f64 ~ Normal(0.0, omega_Ka)
+
+    // -------------------------------------------------------------------------
+    // QSP Inter-Individual Variability
+    // -------------------------------------------------------------------------
+    param omega_kg  : f64
+    param omega_emax : f64
+    param omega_ec50 : f64
+
+    rand eta_kg   : f64 ~ Normal(0.0, omega_kg)
+    rand eta_emax : f64 ~ Normal(0.0, omega_emax)
+    rand eta_ec50 : f64 ~ Normal(0.0, omega_ec50)
+
+    // -------------------------------------------------------------------------
+    // Covariates
+    // -------------------------------------------------------------------------
+    input WT : Mass
+
+    // -------------------------------------------------------------------------
+    // Individual Parameter Mapping
+    // -------------------------------------------------------------------------
+    bind_params(patient) {
+        let w = patient.WT / 70.0_kg
+
+        // PK parameters with allometric scaling
+        model.CL = CL_pop * pow(w, 0.75) * exp(eta_CL)
+        model.V  = V_pop * w * exp(eta_V)
+        model.Ka = Ka_pop * exp(eta_Ka)
+
+        // QSP parameters
+        model.k_grow = k_grow_pop * exp(eta_kg)
+        model.T_max  = T_max_pop
+        model.Emax   = Emax_pop * exp(eta_emax)
+        model.EC50   = EC50_pop * exp(eta_ec50)
+    }
+
+    // For V0, we can only bind one measure to one observable
+    // This demonstrates PK observable with proportional error
+    use_measure PKError for model.C_plasma
+}
+
+// =============================================================================
+// Measurement Models
+// =============================================================================
+
+// PK measurement: proportional error on concentration
+measure PKError {
+    pred : ConcMass
+    obs  : ConcMass
+
+    param sigma_prop : f64
+
+    log_likelihood = Normal_logpdf(
+        x  = (obs / pred) - 1.0,
+        mu = 0.0,
+        sd = sigma_prop
+    )
+}
+
+// Tumor measurement: log-normal error
+// Note: In V0, we can only use one measure per model
+// This is included to demonstrate the multi-observable capability
+// but would require grammar extension to bind multiple measures
+measure TumourError {
+    pred : TumourVolume
+    obs  : TumourVolume
+
+    param sigma_tum : f64
+
+    log_likelihood = Normal_logpdf(
+        x  = log(obs / pred),
+        mu = 0.0,
+        sd = sigma_tum
+    )
+}

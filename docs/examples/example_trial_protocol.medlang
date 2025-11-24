@@ -1,0 +1,38 @@
+protocol ExampleTrial {
+    population model TumorPop
+
+    arms {
+        Control { label = "Control Arm"; dose = 0.0 }
+        LowDose { label = "Low Dose 100mg"; dose = 100.0 }
+        HighDose { label = "High Dose 200mg"; dose = 200.0 }
+    }
+
+    visits {
+        baseline at 0.0
+        week4 at 28.0
+        week8 at 56.0
+        week12 at 84.0
+    }
+
+    inclusion {
+        age between 18 and 75
+        ECOG in [0, 1]
+        baseline_tumour_volume >= 50.0
+    }
+
+    endpoints {
+        ORR {
+            type = "binary"
+            observable = TumourVol
+            shrink_frac = 0.30
+            window = [0.0, 84.0]
+        }
+        PFS {
+            type = "time_to_event"
+            observable = TumourVol
+            progression_frac = 0.20
+            ref_baseline = false
+            window = [0.0, 84.0]
+        }
+    }
+}

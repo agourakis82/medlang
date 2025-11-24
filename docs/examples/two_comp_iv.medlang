@@ -1,0 +1,122 @@
+// MedLang Example: Two-Compartment IV Model with NLME
+//
+// This demonstrates a 2-compartment pharmacokinetic model
+// with central and peripheral compartments.
+
+// =============================================================================
+// Structural Model: Two-Compartment IV
+// =============================================================================
+
+model TwoCompIV {
+    // States: drug amounts in each compartment
+    state A_central : DoseMass      // Central compartment
+    state A_periph  : DoseMass      // Peripheral compartment
+
+    // Individual-level parameters
+    param CL  : Clearance           // Clearance from central [L/h]
+    param V1  : Volume              // Volume of central compartment [L]
+    param Q   : Clearance           // Inter-compartmental clearance [L/h]
+    param V2  : Volume              // Volume of peripheral compartment [L]
+
+    // Dynamics: two-compartment model
+    // Central compartment:
+    //   - Elimination via CL
+    //   - Distribution to peripheral via Q
+    dA_central/dt = -(CL / V1) * A_central - (Q / V1) * A_central + (Q / V2) * A_periph
+
+    // Peripheral compartment:
+    //   - Distribution from central via Q
+    dA_periph/dt  = (Q / V1) * A_central - (Q / V2) * A_periph
+
+    // Observable: plasma concentration in central compartment
+    obs C_plasma : ConcMass = A_central / V1
+}
+
+// =============================================================================
+// Observation Model: Proportional Error
+// =============================================================================
+
+measure ConcPropError {
+    pred : ConcMass
+    obs  : ConcMass
+    param sigma_prop : f64
+
+    log_likelihood = Normal_logpdf(
+        x  = (obs / pred) - 1.0,
+        mu = 0.0,
+        sd = sigma_prop
+    )
+}
+
+// =============================================================================
+// Population Model
+// =============================================================================
+
+population TwoCompPopulation {
+    // Reference to structural model
+    model TwoCompIV
+
+    // Population-level fixed effects parameters
+    param CL_pop : Clearance
+    param V1_pop : Volume
+    param Q_pop  : Clearance
+    param V2_pop : Volume
+
+    // Inter-individual variability parameters
+    param omega_CL : f64
+    param omega_V1 : f64
+    param omega_Q  : f64
+    param omega_V2 : f64
+
+    // Covariate: body weight [kg]
+    input WT : Quantity<kg, f64>
+
+    // Random effects: individual deviations from population
+    rand eta_CL : f64 ~ Normal(0.0, omega_CL)
+    rand eta_V1 : f64 ~ Normal(0.0, omega_V1)
+    rand eta_Q  : f64 ~ Normal(0.0, omega_Q)
+    rand eta_V2 : f64 ~ Normal(0.0, omega_V2)
+
+    // Individual parameter mapping
+    bind_params(patient) {
+        // Normalized weight (dimensionless)
+        let w = patient.WT / 70.0_kg
+
+        // Clearance and Q: allometric scaling with exponent 0.75
+        model.CL = CL_pop * pow(w, 0.75) * exp(eta_CL)
+        model.Q  = Q_pop * pow(w, 0.75) * exp(eta_Q)
+
+        // Volumes: allometric scaling with exponent 1.0
+        model.V1 = V1_pop * w * exp(eta_V1)
+        model.V2 = V2_pop * w * exp(eta_V2)
+    }
+
+    // Bind the observation model to the observable
+    use_measure ConcPropError for model.C_plasma
+}
+
+timeline TwoCompTimeline {
+    at 0.0_h:
+        dose {
+            amount = 100.0_mg
+            to = TwoCompIV.A_central
+        }
+
+    at 0.5_h:  observe TwoCompIV.C_plasma
+    at 1.0_h:  observe TwoCompIV.C_plasma
+    at 2.0_h:  observe TwoCompIV.C_plasma
+    at 4.0_h:  observe TwoCompIV.C_plasma
+    at 8.0_h:  observe TwoCompIV.C_plasma
+    at 12.0_h: observe TwoCompIV.C_plasma
+    at 24.0_h: observe TwoCompIV.C_plasma
+}
+
+// =============================================================================
+// Cohort: Tie everything together
+// =============================================================================
+
+cohort TwoCompStudy {
+    population TwoCompPopulation
+    timeline TwoCompTimeline
+    size 20
+}

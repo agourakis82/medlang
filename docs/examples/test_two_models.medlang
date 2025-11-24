@@ -1,0 +1,31 @@
+// Test: Can we parse two models?
+
+model Model1 {
+    state A : DoseMass
+    param K : RateConst
+    dA/dt = -K * A
+    obs C : ConcMass = A / 1.0_L
+}
+
+model Model2 {
+    state B : DoseMass
+    param K2 : RateConst
+    dB/dt = -K2 * B
+    obs C2 : ConcMass = B / 1.0_L
+}
+
+population TestPop {
+    model Model1
+    param K_pop : RateConst
+    bind_params(patient) {
+        model.K = K_pop
+    }
+    use_measure TestMeasure for model.C
+}
+
+measure TestMeasure {
+    pred : ConcMass
+    obs : ConcMass
+    param sigma : f64
+    log_likelihood = Normal_logpdf(obs, pred, sigma)
+}

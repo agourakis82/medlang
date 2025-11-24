@@ -1,0 +1,42 @@
+// ============================================================================
+// Week 8: L₂ Clinical Protocol DSL Example
+// ============================================================================
+// Phase 2 Oncology Trial Protocol
+// Demonstrates protocol-level specification on top of mechanistic PBPK-QSP model
+
+protocol Oncology_Phase2 {
+    population_model Oncology_PBPK_QSP_Pop
+
+    arms {
+        ArmA {
+            label = "200 mg QD"
+            dose = 200.0_mg
+        }
+        ArmB {
+            label = "400 mg QD"
+            dose = 400.0_mg
+        }
+    }
+
+    visits {
+        baseline at 0.0_d
+        cycle1   at 28.0_d
+        cycle2   at 56.0_d
+        followup at 84.0_d
+    }
+
+    inclusion {
+        age between 18_y and 75_y
+        ECOG in [0, 1]
+        baseline_tumour_volume >= 50.0_cm3
+    }
+
+    endpoints {
+        ORR {
+            type = "binary"
+            observable = "TumourVol"
+            response_shrink = 0.30
+            window = [0.0_d, 84.0_d]
+        }
+    }
+}

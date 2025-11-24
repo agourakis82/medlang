@@ -1,0 +1,71 @@
+// Simplified 2-Compartment PBPK Model
+// Tests let bindings in ODE right-hand sides
+
+model PBPK_2Comp {
+    // States: plasma and tissue
+    state A_plasma : DoseMass
+    state A_tissue : DoseMass
+
+    // Parameters
+    param V_plasma : Volume
+    param V_tissue : Volume
+    param Q_tissue : Clearance  // Blood flow to tissue
+    param Kp_tissue : f64        // Partition coefficient
+    param CL_renal : Clearance
+
+    // Intermediate concentrations (let bindings)
+    let C_plasma = A_plasma / V_plasma
+    let C_tissue_unbound = A_tissue / V_tissue
+    let C_tissue_vein = C_tissue_unbound / Kp_tissue
+
+    // ODEs using let-bound intermediates
+    dA_plasma/dt = Q_tissue * (C_tissue_vein - C_plasma) - CL_renal * C_plasma
+    dA_tissue/dt = Q_tissue * (C_plasma - C_tissue_vein)
+
+    // Observable
+    obs C_plasma_obs : ConcMass = C_plasma
+}
+
+population PBPK_2Comp_Pop {
+    model PBPK_2Comp
+
+    // Reference values for 70 kg
+    param V_plasma_ref : Volume
+    param V_tissue_ref : Volume
+    param Q_tissue_ref : Clearance
+    param CL_renal_ref : Clearance
+    param Kp_tissue_pop : f64
+
+    // Variability
+    param omega_Kp : f64
+    rand eta_Kp : f64 ~ Normal(0.0, omega_Kp)
+
+    // Covariate
+    input WT : Mass
+
+    bind_params(patient) {
+        let w = patient.WT / 70.0_kg
+
+        // Allometric scaling
+        model.V_plasma = V_plasma_ref * w
+        model.V_tissue = V_tissue_ref * w
+        model.Q_tissue = Q_tissue_ref * pow(w, 0.75)
+        model.CL_renal = CL_renal_ref * pow(w, 0.75)
+
+        // Partition coefficient with IIV
+        model.Kp_tissue = Kp_tissue_pop * exp(eta_Kp)
+    }
+
+    use_measure PlasmaError for model.C_plasma_obs
+}
+
+measure PlasmaError {
+    pred : ConcMass
+    obs : ConcMass
+    param sigma_prop : f64
+    log_likelihood = Normal_logpdf(
+        x = (obs / pred) - 1.0,
+        mu = 0.0,
+        sd = sigma_prop
+    )
+}

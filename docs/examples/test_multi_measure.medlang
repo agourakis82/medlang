@@ -1,0 +1,28 @@
+model SimpleModel {
+    state A : Mass
+    param k : RateConst
+    dA/dt = -k * A
+}
+
+population SimplePop {
+    model SimpleModel
+    param k_pop : RateConst
+    bind_params(patient) {
+        model.k = k_pop
+    }
+    use measure FirstMeasure
+}
+
+measure FirstMeasure {
+    pred : f64
+    obs : f64
+    param sigma1 : f64
+    log_likelihood = Normal_logpdf(x = obs - pred, mu = 0.0, sd = sigma1)
+}
+
+measure SecondMeasure {
+    pred : f64
+    obs : f64
+    param sigma2 : f64
+    log_likelihood = Normal_logpdf(x = obs - pred, mu = 0.0, sd = sigma2)
+}

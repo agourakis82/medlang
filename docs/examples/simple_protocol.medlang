@@ -1,0 +1,43 @@
+protocol TestProtocol {
+    population model TestPop
+
+    arms {
+        ArmA {
+            label = "Low Dose"
+            dose = 100.0
+        }
+        ArmB {
+            label = "High Dose"
+            dose = 200.0
+        }
+    }
+
+    visits {
+        baseline at 0.0
+        week4 at 28.0
+        week8 at 56.0
+    }
+
+    inclusion {
+        age between 18 and 75
+        ECOG in [0, 1]
+        baseline_tumour_volume >= 50.0
+    }
+
+    endpoints {
+        ORR {
+            type = "binary"
+            observable = TumourVol
+            shrink_frac = 0.30
+            window = [0.0, 56.0]
+        }
+
+        PFS {
+            type = "time_to_event"
+            observable = TumourVol
+            progression_frac = 0.20
+            ref_baseline = false
+            window = [0.0, 56.0]
+        }
+    }
+}

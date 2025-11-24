@@ -1,0 +1,221 @@
+// ============================================================================
+// Week 7: Quantum-Informed PBPK → QSP Vertical Integration
+// ============================================================================
+// This file demonstrates the complete multiscale pipeline:
+//   QM stub → Kp_tumor → PBPK tumour exposure → QSP tumour dynamics → population inference
+//
+// Architecture:
+//   - PBPK2_Tumor: 2-compartment PBPK (plasma + tumor)
+//   - Tumour_QSP: Tumor growth-kill dynamics
+//   - Oncology_PBPK_QSP: Composite model connecting PBPK → QSP
+
+// ============================================================================
+// Base Model 1: PBPK with Plasma + Tumor
+// ============================================================================
+model PBPK2_Tumor {
+    // States (amounts in each compartment)
+    state A_plasma : DoseMass    // Amount in plasma
+    state A_tumor  : DoseMass    // Amount in tumor tissue
+
+    // PBPK Parameters
+    param CL       : Clearance   // Systemic clearance [L/h]
+    param Q_tum    : Clearance   // Blood flow to tumor [L/h]
+    param V_plasma : Volume      // Plasma volume [L]
+    param V_tumor  : Volume      // Tumor volume [L]
+    param Kp_tumor : f64         // Tumor:plasma partition coefficient (dimensionless)
+
+    // Intermediate concentrations
+    let C_plasma = A_plasma / V_plasma
+    let C_tumor  = A_tumor / V_tumor
+    let C_tumor_vein = C_tumor / Kp_tumor  // Venous concentration leaving tumor
+
+    // PBPK ODEs (Mass Balance)
+    // Plasma: loses drug via clearance and perfusion to tumor
+    dA_plasma/dt = -CL * C_plasma - Q_tum * (C_plasma - C_tumor_vein)
+
+    // Tumor: gains drug from arterial blood, loses via venous return
+    dA_tumor/dt = Q_tum * (C_plasma - C_tumor_vein)
+
+    // Observables
+    obs C_plasma : ConcMass = C_plasma
+    obs C_tumor  : ConcMass = C_tumor
+}
+
+// ============================================================================
+// Base Model 2: Tumor QSP Dynamics
+// ============================================================================
+model Tumour_QSP {
+    // Input from PBPK model
+    input C_tumor : ConcMass  // Drug concentration in tumor tissue
+
+    // QSP State
+    state Tumour : TumourVolume  // Tumor size [mm³ or cm³]
+
+    // QSP Parameters
+    param k_grow : RateConst      // Tumor growth rate [1/time]
+    param T_max  : TumourVolume   // Carrying capacity
+    param Emax   : f64            // Maximum drug effect (dimensionless)
+    param EC50   : ConcMass       // Half-maximal concentration
+
+    // Drug effect (Emax model) - computed as intermediate
+    let E_drug = Emax * C_tumor / (EC50 + C_tumor)
+
+    // Tumor dynamics: logistic growth - drug kill
+    dTumour/dt = k_grow * Tumour * (1.0 - Tumour / T_max) - E_drug * Tumour
+
+    // Observable
+    obs TumourVol : TumourVolume = Tumour
+}
+
+// ============================================================================
+// Composite Model: PBPK + QSP Integration
+// ============================================================================
+model Oncology_PBPK_QSP {
+    // Declare submodels
+    submodel PBPK : PBPK2_Tumor
+    submodel QSP  : Tumour_QSP
+
+    // Connect PBPK tumor concentration to QSP input
+    connect {
+        QSP.C_tumor = PBPK.C_tumor
+    }
+}
+
+// ============================================================================
+// Population Model with Quantum Integration
+// ============================================================================
+population Oncology_PBPK_QSP_Pop {
+    model Oncology_PBPK_QSP
+
+    // -------------------------------------------------------------------------
+    // PBPK Population Parameters
+    // -------------------------------------------------------------------------
+    // Reference values (70 kg human)
+    param CL_pop       : Clearance  // Population mean clearance
+    param Q_tum_pop    : Clearance  // Population mean tumor blood flow
+    param V_plasma_pop : Volume     // Population mean plasma volume
+    param V_tumor_pop  : Volume     // Population mean tumor volume
+
+    // IIV on PBPK parameters
+    param omega_CL  : f64
+    param omega_Q   : f64
+    param omega_Vpl : f64
+
+    rand eta_CL  : f64 ~ Normal(0.0, omega_CL)
+    rand eta_Q   : f64 ~ Normal(0.0, omega_Q)
+    rand eta_Vpl : f64 ~ Normal(0.0, omega_Vpl)
+
+    // -------------------------------------------------------------------------
+    // QSP Population Parameters
+    // -------------------------------------------------------------------------
+    param k_grow_pop : RateConst
+    param T_max_pop  : TumourVolume
+    param Emax_pop   : f64
+
+    // Quantum-informed EC50: EC50 = alpha_EC50 * Kd_QM * exp(eta_EC50)
+    param alpha_EC50 : f64  // Scaling factor (typically 1-10)
+
+    // IIV on QSP parameters
+    param omega_EC50  : f64
+    param omega_Emax  : f64
+    param omega_kgrow : f64
+
+    rand eta_EC50  : f64 ~ Normal(0.0, omega_EC50)
+    rand eta_Emax  : f64 ~ Normal(0.0, omega_Emax)
+    rand eta_kgrow : f64 ~ Normal(0.0, omega_kgrow)
+
+    // -------------------------------------------------------------------------
+    // Covariates
+    // -------------------------------------------------------------------------
+    input WT : Mass  // Body weight for allometric scaling
+
+    // -------------------------------------------------------------------------
+    // Individual Parameter Mapping
+    // -------------------------------------------------------------------------
+    bind_params(patient) {
+        // Allometric scaling
+        let w = patient.WT / 70.0_kg
+
+        // PBPK parameters with allometric scaling
+        // Clearances and flows scale with w^0.75
+        model.CL    = CL_pop * pow(w, 0.75) * exp(eta_CL)
+        model.Q_tum = Q_tum_pop * pow(w, 0.75) * exp(eta_Q)
+
+        // Volumes scale linearly with weight
+        model.V_plasma = V_plasma_pop * w * exp(eta_Vpl)
+        model.V_tumor  = V_tumor_pop * w
+
+        // Kp_tumor: QUANTUM-INFORMED from ΔG_part in QM stub
+        // No IIV for now (could add later: Kp_i = alpha_Kp * Kp_QM * exp(eta_Kp))
+        model.Kp_tumor = Kp_tumor_QM  // External constant from QM stub
+
+        // QSP parameters
+        model.k_grow = k_grow_pop * exp(eta_kgrow)
+        model.T_max  = T_max_pop
+        model.Emax   = Emax_pop * exp(eta_Emax)
+
+        // EC50: QUANTUM-INFORMED from Kd in QM stub
+        // EC50 = alpha * Kd, where Kd reflects target binding affinity
+        model.EC50 = alpha_EC50 * Kd_QM * exp(eta_EC50)
+    }
+
+    // Measurement model
+    use_measure PlasmaConcentration for model.PBPK.C_plasma
+    use_measure TumorSize for model.QSP.TumourVol
+}
+
+// ============================================================================
+// Measurement Models
+// ============================================================================
+measure PlasmaConcentration {
+    pred : ConcMass
+    obs  : ConcMass
+
+    param sigma_prop : f64  // Proportional error
+
+    log_likelihood = Normal_logpdf(
+        x  = log(obs),
+        mu = log(pred),
+        sd = sigma_prop
+    )
+}
+
+measure TumorSize {
+    pred : TumourVolume
+    obs  : TumourVolume
+
+    param sigma_add : f64  // Additive error on log scale
+
+    log_likelihood = Normal_logpdf(
+        x  = log(obs),
+        mu = log(pred),
+        sd = sigma_add
+    )
+}
+
+// ============================================================================
+// Timeline (Example Dosing + Sampling)
+// ============================================================================
+timeline OncologyTrial {
+    // Dosing: IV bolus at time 0
+    dose(time = 0.0_h, target = Oncology_PBPK_QSP.PBPK.A_plasma, amount = 100.0_mg)
+
+    // PK sampling: dense early, sparse later
+    sample(Oncology_PBPK_QSP.PBPK.C_plasma, times = [0.5_h, 1.0_h, 2.0_h, 4.0_h, 8.0_h, 24.0_h, 48.0_h, 72.0_h])
+
+    // Tumor size measurements: weekly for 12 weeks
+    sample(Oncology_PBPK_QSP.QSP.TumourVol, times = [0.0_day, 7.0_day, 14.0_day, 21.0_day, 28.0_day, 42.0_day, 56.0_day, 70.0_day, 84.0_day])
+}
+
+// ============================================================================
+// Cohort (Study Population)
+// ============================================================================
+cohort OncologyPatients {
+    use_timeline OncologyTrial
+
+    // Patient covariates
+    WT ~ Normal(70.0_kg, 15.0_kg)
+
+    // Number of patients
+    n_subjects = 30
+}

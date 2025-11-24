@@ -1,0 +1,152 @@
+// ============================================================================
+// Week 7: Quantum-Informed PBPK → QSP Vertical Integration
+// Simplified version without composite models (V0 limitation)
+// ============================================================================
+// This demonstrates the complete multiscale pipeline:
+//   QM stub → Kp_tumor → PBPK tumour exposure → QSP tumour dynamics → population inference
+
+model Oncology_PBPK_QSP {
+    // =========================================================================
+    // PBPK States (2 compartments: plasma + tumor)
+    // =========================================================================
+    state A_plasma : DoseMass    // Amount in plasma
+    state A_tumor  : DoseMass    // Amount in tumor tissue
+
+    // QSP State
+    state Tumour : TumourVolume  // Tumor size
+
+    // =========================================================================
+    // PBPK Parameters
+    // =========================================================================
+    param CL       : Clearance   // Systemic clearance [L/h]
+    param Q_tum    : Clearance   // Blood flow to tumor [L/h]
+    param V_plasma : Volume      // Plasma volume [L]
+    param V_tumor  : Volume      // Tumor volume [L]
+    param Kp_tumor : f64         // Tumor:plasma partition coefficient (QM-informed!)
+
+    // =========================================================================
+    // QSP Parameters
+    // =========================================================================
+    param k_grow : RateConst      // Tumor growth rate [1/time]
+    param T_max  : TumourVolume   // Carrying capacity
+    param Emax   : f64            // Maximum drug effect
+    param EC50   : ConcMass       // Half-maximal concentration (QM-informed!)
+
+    // =========================================================================
+    // Intermediate Concentrations
+    // =========================================================================
+    let C_plasma = A_plasma / V_plasma
+    let C_tumor  = A_tumor / V_tumor
+    let C_tumor_vein = C_tumor / Kp_tumor
+
+    // Drug effect (Emax model)
+    let E_drug = Emax * C_tumor / (EC50 + C_tumor)
+
+    // =========================================================================
+    // PBPK ODEs (Mass Balance)
+    // =========================================================================
+    dA_plasma/dt = -CL * C_plasma - Q_tum * (C_plasma - C_tumor_vein)
+    dA_tumor/dt  = Q_tum * (C_plasma - C_tumor_vein)
+
+    // =========================================================================
+    // QSP ODE (Tumor Growth-Kill)
+    // Key: Uses C_tumor from PBPK, not Kp*C_plasma!
+    // =========================================================================
+    dTumour/dt = k_grow * Tumour * (1.0 - Tumour / T_max) - E_drug * Tumour
+
+    // =========================================================================
+    // Observables
+    // =========================================================================
+    obs C_plasma_obs : ConcMass = C_plasma
+    obs C_tumor_obs  : ConcMass = C_tumor
+    obs TumourVol    : TumourVolume = Tumour
+}
+
+// ============================================================================
+// Population Model with Quantum Integration
+// ============================================================================
+population Oncology_PBPK_QSP_Pop {
+    model Oncology_PBPK_QSP
+
+    // -------------------------------------------------------------------------
+    // PBPK Population Parameters
+    // -------------------------------------------------------------------------
+    param CL_pop       : Clearance
+    param Q_tum_pop    : Clearance
+    param V_plasma_pop : Volume
+    param V_tumor_pop  : Volume
+
+    // IIV on PBPK parameters
+    param omega_CL  : f64
+    param omega_Q   : f64
+    param omega_Vpl : f64
+
+    rand eta_CL  : f64 ~ Normal(0.0, omega_CL)
+    rand eta_Q   : f64 ~ Normal(0.0, omega_Q)
+    rand eta_Vpl : f64 ~ Normal(0.0, omega_Vpl)
+
+    // -------------------------------------------------------------------------
+    // QSP Population Parameters
+    // -------------------------------------------------------------------------
+    param k_grow_pop : RateConst
+    param T_max_pop  : TumourVolume
+    param Emax_pop   : f64
+    param alpha_EC50 : f64  // Scaling factor for EC50 = alpha * Kd_QM
+
+    // IIV on QSP parameters
+    param omega_EC50  : f64
+    param omega_Emax  : f64
+    param omega_kgrow : f64
+
+    rand eta_EC50  : f64 ~ Normal(0.0, omega_EC50)
+    rand eta_Emax  : f64 ~ Normal(0.0, omega_Emax)
+    rand eta_kgrow : f64 ~ Normal(0.0, omega_kgrow)
+
+    // -------------------------------------------------------------------------
+    // Covariates
+    // -------------------------------------------------------------------------
+    input WT : Mass  // Body weight for allometric scaling
+
+    // -------------------------------------------------------------------------
+    // Individual Parameter Mapping
+    // -------------------------------------------------------------------------
+    bind_params(patient) {
+        // Allometric scaling
+        let w = patient.WT / 70.0_kg
+
+        // PBPK parameters with allometric scaling
+        model.CL       = CL_pop * pow(w, 0.75) * exp(eta_CL)
+        model.Q_tum    = Q_tum_pop * pow(w, 0.75) * exp(eta_Q)
+        model.V_plasma = V_plasma_pop * w * exp(eta_Vpl)
+        model.V_tumor  = V_tumor_pop * w
+
+        // Kp_tumor: QUANTUM-INFORMED from ΔG_part
+        model.Kp_tumor = Kp_tumor_QM  // External constant from QM stub
+
+        // QSP parameters
+        model.k_grow = k_grow_pop * exp(eta_kgrow)
+        model.T_max  = T_max_pop
+        model.Emax   = Emax_pop * exp(eta_Emax)
+
+        // EC50: QUANTUM-INFORMED from Kd
+        model.EC50 = alpha_EC50 * Kd_QM * exp(eta_EC50)
+    }
+
+    // Measurement models
+    use_measure PlasmaConcentration for model.C_plasma_obs
+}
+
+// ============================================================================
+// Measurement Models
+// ============================================================================
+measure PlasmaConcentration {
+    pred : ConcMass
+    obs  : ConcMass
+    param sigma_prop : f64
+
+    log_likelihood = Normal_logpdf(
+        x  = log(obs),
+        mu = log(pred),
+        sd = sigma_prop
+    )
+}

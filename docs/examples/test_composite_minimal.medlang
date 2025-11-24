@@ -1,0 +1,64 @@
+// Minimal composite model test
+
+model PBPK_Simple {
+    state A_plasma : DoseMass
+    param CL : Clearance
+    param V : Volume
+
+    let C_plasma = A_plasma / V
+
+    dA_plasma/dt = -CL * C_plasma
+
+    obs C_plasma_obs : ConcMass = C_plasma
+}
+
+model QSP_Simple {
+    input C_drug : ConcMass
+
+    state Tumor : TumourVolume
+    param k_grow : RateConst
+    param Emax : f64
+    param EC50 : ConcMass
+
+    let E_drug = Emax * C_drug / (EC50 + C_drug)
+
+    dTumor/dt = k_grow * Tumor - E_drug * Tumor
+
+    obs TumorVol : TumourVolume = Tumor
+}
+
+model Composite {
+    submodel PK : PBPK_Simple
+    submodel PD : QSP_Simple
+
+    connect {
+        PD.C_drug = PK.C_plasma_obs
+    }
+}
+
+population CompositePop {
+    model Composite
+
+    param CL_pop : Clearance
+    param V_pop : Volume
+    param k_grow_pop : RateConst
+    param Emax_pop : f64
+    param EC50_pop : ConcMass
+
+    bind_params(patient) {
+        model.CL = CL_pop
+        model.V = V_pop
+        model.k_grow = k_grow_pop
+        model.Emax = Emax_pop
+        model.EC50 = EC50_pop
+    }
+
+    use_measure TestMeasure for model.C_plasma_obs
+}
+
+measure TestMeasure {
+    pred : ConcMass
+    obs : ConcMass
+    param sigma : f64
+    log_likelihood = Normal_logpdf(obs, pred, sigma)
+}
