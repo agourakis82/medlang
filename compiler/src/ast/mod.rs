@@ -32,11 +32,15 @@ pub struct Program {
     pub declarations: Vec<Declaration>,
 }
 
+pub mod contracts; // Week 28: Design-by-Contract
 pub mod core_lang;
 pub mod enum_decl;
 pub mod evidence;
 pub mod module;
 
+pub use contracts::{
+    AssertStmt, ContractClause, ContractKind, ContractViolation, FnContract, InvariantBlock,
+};
 pub use enum_decl::{EnumDecl, EnumVariant};
 
 pub use evidence::{
@@ -96,6 +100,7 @@ pub enum ModelItem {
     Let(LetBinding), // Let bindings for intermediate values (e.g., let E_drug = ...)
     Submodel(SubmodelDecl), // Submodel declaration
     Connect(ConnectionDecl), // Connection between models
+    Invariants(InvariantBlock), // Week 28: model invariants
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -80,6 +80,7 @@ pub struct FnDef {
     pub name: Ident,
     pub params: Vec<Param>,
     pub ret_type: Option<TypeAnn>, // Required for public functions
+    pub contract: Option<crate::ast::FnContract>, // Week 28: function contracts
     pub body: Block,
 }
 
@@ -89,8 +90,14 @@ impl FnDef {
             name,
             params,
             ret_type,
+            contract: None, // Week 28: no contract by default
             body,
         }
+    }
+
+    pub fn with_contract(mut self, contract: crate::ast::FnContract) -> Self {
+        self.contract = Some(contract);
+        self
     }
 }
 
@@ -115,6 +122,9 @@ impl Block {
 pub enum Stmt {
     /// Let binding: let x: Type = expr;
     Let(LetDecl),
+
+    /// Assert statement: assert condition, "message"; (Week 28)
+    Assert(crate::ast::AssertStmt),
 
     /// Expression statement
     Expr(Expr),

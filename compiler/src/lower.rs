@@ -485,6 +485,10 @@ fn lower_model(
             ModelItem::Connect(_) => {
                 // Should not reach here (checked above)
             }
+            ModelItem::Invariants(_) => {
+                // Week 28: Invariants are handled at runtime, not in IR lowering
+                // They will be instrumented in the simulation/evaluation code
+            }
         }
     }
 

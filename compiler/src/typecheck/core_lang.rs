@@ -297,6 +297,18 @@ pub fn typecheck_block(env: &mut TypeEnv, block: &Block) -> Result<CoreType, Typ
             Stmt::Let(let_decl) => {
                 last_ty = typecheck_let(env, let_decl)?;
             }
+            Stmt::Assert(assert_stmt) => {
+                // Week 28: Type check assert statements
+                // The condition must be Bool
+                let cond_ty = typecheck_expr(env, &assert_stmt.condition)?;
+                if cond_ty != CoreType::Bool {
+                    return Err(TypeError::Mismatch {
+                        expected: "Bool",
+                        found: cond_ty.as_str(),
+                    });
+                }
+                last_ty = CoreType::Unit;
+            }
             Stmt::Expr(expr) => {
                 last_ty = typecheck_expr(env, expr)?;
             }
