@@ -23,6 +23,9 @@ pub enum CoreType {
         ret: Box<CoreType>,
     },
 
+    // Enum types (Week 27) - discrete clinical states
+    Enum(String), // Enum name: Response, ToxicityGrade, etc.
+
     // Domain types (L₁-L₃) - opaque at L₀ level but mapped to handles at runtime
     Model,
     Protocol,
@@ -54,6 +57,7 @@ impl CoreType {
                 let param_strs: Vec<String> = params.iter().map(|p| p.as_str()).collect();
                 format!("({}) -> {}", param_strs.join(", "), ret.as_str())
             }
+            CoreType::Enum(name) => name.clone(),
             CoreType::Model => "Model".to_string(),
             CoreType::Protocol => "Protocol".to_string(),
             CoreType::Policy => "Policy".to_string(),

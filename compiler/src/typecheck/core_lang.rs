@@ -48,6 +48,35 @@ pub enum TypeError {
 
     #[error("expected {expected}, but function body returns {found}")]
     ReturnTypeMismatch { expected: String, found: String },
+
+    // Week 27: Enum type errors
+    #[error("unknown enum `{0}`")]
+    UnknownEnum(String),
+
+    #[error("unknown variant `{variant_name}` in enum `{enum_name}`: {message}")]
+    UnknownEnumVariant {
+        enum_name: String,
+        variant_name: String,
+        message: String,
+    },
+
+    #[error("match scrutinee must be an enum type, found {found}")]
+    MatchNonEnum { found: String },
+
+    #[error("match arm enum mismatch: scrutinee is `{scrutinee_enum}`, but arm pattern uses `{arm_enum}`")]
+    MatchEnumMismatch {
+        scrutinee_enum: String,
+        arm_enum: String,
+    },
+
+    #[error("match arm type mismatch: expected {expected}, found {found}")]
+    MatchArmTypeMismatch { expected: String, found: String },
+
+    #[error("non-exhaustive match on enum `{enum_name}`: missing variants [{missing_variants:?}]")]
+    NonExhaustiveMatch {
+        enum_name: String,
+        missing_variants: Vec<String>,
+    },
 }
 
 // =============================================================================

@@ -337,6 +337,7 @@ impl TypeChecker {
             Declaration::Cohort(_) => {}   // Cohort doesn't need deep type checking for V0
             Declaration::Protocol(_) => {} // Protocol type checking to be added in Week 8
             Declaration::Evidence(_) => {} // Evidence program type checking (Week 24)
+            Declaration::Enum(_) => {} // Enum type checking (Week 27) - handled by core_lang typecheck
         }
     }
 
@@ -448,6 +449,10 @@ impl TypeChecker {
             ExprKind::Unary(op, operand) => self.infer_unary(op, operand),
             ExprKind::Binary(op, left, right) => self.infer_binary(op, left, right),
             ExprKind::Call(name, args) => self.infer_call(name, args),
+            // Week 27: Enum variants and match expressions
+            // These are type-checked by core_lang::typecheck_expr
+            ExprKind::EnumVariant { .. } => InferredType::Unknown,
+            ExprKind::Match { .. } => InferredType::Unknown,
         }
     }
 

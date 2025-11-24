@@ -33,8 +33,11 @@ pub struct Program {
 }
 
 pub mod core_lang;
+pub mod enum_decl;
 pub mod evidence;
 pub mod module;
+
+pub use enum_decl::{EnumDecl, EnumVariant};
 
 pub use evidence::{
     DesignDecl, DesignGridSpec, EvidenceBody, EvidenceProgram, HierarchyDecl, HierarchyKind,
@@ -53,6 +56,7 @@ pub enum Declaration {
     Cohort(CohortDef),
     Protocol(ProtocolDef),     // Week 8: L₂ Clinical Trial DSL
     Evidence(EvidenceProgram), // Week 24: L₃ Evidence Programs
+    Enum(EnumDecl),            // Week 27: Algebraic Data Types
 }
 
 impl Declaration {
@@ -66,6 +70,7 @@ impl Declaration {
             Declaration::Cohort(c) => &c.name,
             Declaration::Protocol(p) => &p.name,
             Declaration::Evidence(e) => e.name.as_str(),
+            Declaration::Enum(e) => &e.name,
         }
     }
 }
@@ -345,6 +350,18 @@ pub enum ExprKind {
 
     /// Function call
     Call(String, Vec<Argument>),
+
+    /// Enum variant constructor (Week 27): Response::CR
+    EnumVariant {
+        enum_name: String,
+        variant_name: String,
+    },
+
+    /// Pattern matching on enums (Week 27)
+    Match {
+        scrutinee: Box<Expr>,
+        arms: Vec<MatchArm>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -394,6 +411,29 @@ impl QualifiedName {
     pub fn simple(name: String) -> Self {
         Self { parts: vec![name] }
     }
+}
+
+// =============================================================================
+// Pattern Matching (Week 27)
+// =============================================================================
+
+/// A single match arm: pattern => body
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MatchArm {
+    pub pattern: MatchPattern,
+    pub body: Expr,
+}
+
+/// Pattern in a match arm
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum MatchPattern {
+    /// Specific enum variant: Response::CR
+    Variant {
+        enum_name: String,
+        variant_name: String,
+    },
+    /// Wildcard pattern: _ (matches anything)
+    Wildcard,
 }
 
 // =============================================================================
