@@ -6,7 +6,7 @@
 //! - Measure: Endpoint definitions
 //! - Bundle: Patient + Observation data from TrialDataset
 
-use crate::ast::{ArmDef, EndpointDef, ProtocolDef, VisitDef};
+use crate::ast::{ArmDef, EndpointDef, EndpointKind, EndpointSpec, ProtocolDef, VisitDef};
 use crate::data::trial::TrialDataset;
 use serde::{Deserialize, Serialize};
 
@@ -321,7 +321,7 @@ fn endpoint_to_fhir_objective(endpoint: &EndpointDef) -> FhirResearchStudyObject
         name: Some(endpoint.name.clone()),
         objective_type: Some(FhirCodeableConcept {
             coding: None,
-            text: Some(endpoint.kind.to_string()),
+            text: Some(format!("{}", endpoint.kind)), // Using Display trait
         }),
     }
 }
@@ -351,9 +351,9 @@ pub fn protocol_to_fhir_plan_definition(protocol: &ProtocolDef) -> FhirPlanDefin
 fn visit_to_fhir_action(visit: &VisitDef) -> FhirPlanDefinitionAction {
     FhirPlanDefinitionAction {
         title: visit.name.clone(),
-        description: Some(format!("Visit at day {}", visit.day)),
+        description: Some(format!("Visit at day {}", visit.time_days)),
         timing: Some(FhirTiming {
-            event: Some(vec![format!("Day {}", visit.day)]),
+            event: Some(vec![format!("Day {}", visit.time_days)]),
             repeat: None,
         }),
         action: None,
@@ -370,6 +370,11 @@ pub fn protocol_to_fhir_measures(protocol: &ProtocolDef) -> Vec<FhirMeasure> {
 }
 
 fn endpoint_to_fhir_measure(endpoint: &EndpointDef, protocol_name: &str) -> FhirMeasure {
+    let window_days = match &endpoint.spec {
+        EndpointSpec::ResponseRate { window_end_days, .. } => *window_end_days,
+        EndpointSpec::TimeToProgression { window_end_days, .. } => *window_end_days,
+    };
+
     FhirMeasure {
         resource_type: "Measure".to_string(),
         id: format!("{}_{}", protocol_name, endpoint.name),
@@ -379,9 +384,9 @@ fn endpoint_to_fhir_measure(endpoint: &EndpointDef, protocol_name: &str) -> Fhir
         group: Some(vec![FhirMeasureGroup {
             code: Some(FhirCodeableConcept {
                 coding: None,
-                text: Some(endpoint.kind.to_string()),
+                text: Some(format!("{}", endpoint.kind)), // Using Display trait
             }),
-            description: Some(format!("Window: {} days", endpoint.window_days)),
+            description: Some(format!("Window: {} days", window_days)),
             population: None,
         }]),
     }
@@ -462,7 +467,7 @@ pub fn trial_to_fhir_bundle(dataset: &TrialDataset, study_id: &str) -> FhirBundl
 impl std::fmt::Display for crate::ast::EndpointKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            crate::ast::EndpointKind::BinaryResponse => write!(f, "ORR (Objective Response Rate)"),
+            crate::ast::EndpointKind::Binary => write!(f, "ORR (Objective Response Rate)"),
             crate::ast::EndpointKind::TimeToEvent => write!(f, "PFS (Progression-Free Survival)"),
         }
     }
@@ -496,9 +501,13 @@ mod tests {
             inclusion: None,
             endpoints: vec![EndpointDef {
                 name: "ORR".to_string(),
-                kind: EndpointKind::BinaryResponse,
-                window_days: 84,
-                threshold: Some(0.3),
+                kind: EndpointKind::Binary,
+                spec: EndpointSpec::ResponseRate {
+                    observable: "tumor_size".to_string(),
+                    shrink_fraction: 0.3,
+                    window_start_days: 0.0,
+                    window_end_days: 84.0,
+                },
                 span: None,
             }],
             decisions: vec![],
@@ -525,12 +534,12 @@ mod tests {
             visits: vec![
                 VisitDef {
                     name: "Baseline".to_string(),
-                    day: 0,
+                    time_days: 0.0,
                     span: None,
                 },
                 VisitDef {
                     name: "Week12".to_string(),
-                    day: 84,
+                    time_days: 84.0,
                     span: None,
                 },
             ],
@@ -559,8 +568,13 @@ mod tests {
             endpoints: vec![EndpointDef {
                 name: "PFS".to_string(),
                 kind: EndpointKind::TimeToEvent,
-                window_days: 180,
-                threshold: None,
+                spec: EndpointSpec::TimeToProgression {
+                    observable: "tumor_size".to_string(),
+                    increase_fraction: 0.2,
+                    window_start_days: 0.0,
+                    window_end_days: 180.0,
+                    ref_baseline: false,
+                },
                 span: None,
             }],
             decisions: vec![],

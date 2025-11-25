@@ -99,6 +99,23 @@ pub trait RLEnv {
     }
 }
 
+/// Observation wrapper for policy consumption
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RlObservation {
+    pub tumour: f64,
+    pub anc: Option<f64>,
+    pub cycle: u32,
+    pub time_days: f64,
+    pub cumulative_dose_mg: f64,
+    pub latent_state: Vec<f64>,
+}
+
+/// Action wrapper for policy output
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RlAction {
+    pub dose_factor: f64,
+}
+
 /// Episode trajectory for logging and analysis
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Episode {

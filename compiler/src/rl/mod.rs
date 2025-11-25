@@ -8,7 +8,7 @@ pub mod discretizer;
 pub mod env_dose_tox;
 pub mod train;
 
-pub use core::{Action, Episode, RLEnv, State, StepInfo, StepResult};
+pub use core::{Action, Episode, RLEnv, RlAction, RlObservation, State, StepInfo, StepResult};
 pub use discretizer::{BoxDiscretizer, StateDiscretizer};
 pub use env_dose_tox::{DoseToxEnv, DoseToxEnvConfig};
 pub use train::{

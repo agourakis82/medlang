@@ -99,7 +99,7 @@ pub struct RLTrainReport {
 }
 
 /// Policy handle that can be serialized and reused
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RLPolicyHandle {
     /// Number of discrete states
     pub n_states: usize,

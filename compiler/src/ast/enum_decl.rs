@@ -9,6 +9,7 @@
 // Future extensions can add variant fields.
 
 use crate::ast::Ident;
+use serde::{Deserialize, Serialize};
 
 /// Top-level enum declaration
 ///
@@ -21,7 +22,7 @@ use crate::ast::Ident;
 ///   PD;
 /// }
 /// ```
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EnumDecl {
     /// Enum name (e.g., "Response")
     pub name: Ident,
@@ -32,7 +33,7 @@ pub struct EnumDecl {
 /// A single enum variant (nullary constructor)
 ///
 /// Example: `CR;` in `enum Response { CR; PR; SD; PD; }`
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EnumVariant {
     /// Variant name (e.g., "CR", "PR", "SD", "PD")
     pub name: Ident,

@@ -3,22 +3,28 @@
 //! Generates CQL library snippets encoding endpoint semantics
 //! (ORR = objective response rate, PFS = progression-free survival)
 
-use crate::ast::{EndpointDef, EndpointKind};
+use crate::ast::{EndpointDef, EndpointKind, EndpointSpec};
 
 /// Generate CQL library for an endpoint
 pub fn endpoint_to_cql(endpoint: &EndpointDef, protocol_name: &str) -> String {
     let library_name = format!("{}_{}", protocol_name, endpoint.name);
 
     match endpoint.kind {
-        EndpointKind::BinaryResponse => generate_orr_cql(&library_name, endpoint),
+        EndpointKind::Binary => generate_orr_cql(&library_name, endpoint),
         EndpointKind::TimeToEvent => generate_pfs_cql(&library_name, endpoint),
+    }
+}
+
+fn get_endpoint_spec_values(endpoint: &EndpointDef) -> (f64, f64) {
+    match &endpoint.spec {
+        EndpointSpec::ResponseRate { shrink_fraction, window_end_days, .. } => (*shrink_fraction, *window_end_days),
+        EndpointSpec::TimeToProgression { window_end_days, .. } => (0.0, *window_end_days),
     }
 }
 
 /// Generate CQL for ORR (Objective Response Rate) endpoint
 fn generate_orr_cql(library_name: &str, endpoint: &EndpointDef) -> String {
-    let threshold = endpoint.threshold.unwrap_or(0.3);
-    let window_days = endpoint.window_days;
+    let (threshold, window_days) = get_endpoint_spec_values(endpoint);
 
     format!(
         r#"library {library_name} version '1.0.0'
@@ -79,7 +85,7 @@ define "Objective Response":
 
 /// Generate CQL for PFS (Progression-Free Survival) endpoint
 fn generate_pfs_cql(library_name: &str, endpoint: &EndpointDef) -> String {
-    let window_days = endpoint.window_days;
+    let (_, window_days) = get_endpoint_spec_values(endpoint);
 
     format!(
         r#"library {library_name} version '1.0.0'
@@ -173,9 +179,13 @@ mod tests {
     fn test_orr_cql_generation() {
         let endpoint = EndpointDef {
             name: "ORR".to_string(),
-            kind: EndpointKind::BinaryResponse,
-            window_days: 84,
-            threshold: Some(0.3),
+            kind: EndpointKind::Binary,
+            spec: EndpointSpec::ResponseRate {
+                observable: "tumor_size".to_string(),
+                shrink_fraction: 0.3,
+                window_start_days: 0.0,
+                window_end_days: 84.0,
+            },
             span: None,
         };
 
@@ -196,8 +206,13 @@ mod tests {
         let endpoint = EndpointDef {
             name: "PFS".to_string(),
             kind: EndpointKind::TimeToEvent,
-            window_days: 180,
-            threshold: None,
+            spec: EndpointSpec::TimeToProgression {
+                observable: "tumor_size".to_string(),
+                increase_fraction: 0.2,
+                window_start_days: 0.0,
+                window_end_days: 180.0,
+                ref_baseline: false,
+            },
             span: None,
         };
 
@@ -218,16 +233,25 @@ mod tests {
         let endpoints = vec![
             EndpointDef {
                 name: "ORR".to_string(),
-                kind: EndpointKind::BinaryResponse,
-                window_days: 84,
-                threshold: Some(0.3),
+                kind: EndpointKind::Binary,
+                spec: EndpointSpec::ResponseRate {
+                    observable: "tumor_size".to_string(),
+                    shrink_fraction: 0.3,
+                    window_start_days: 0.0,
+                    window_end_days: 84.0,
+                },
                 span: None,
             },
             EndpointDef {
                 name: "PFS".to_string(),
                 kind: EndpointKind::TimeToEvent,
-                window_days: 180,
-                threshold: None,
+                spec: EndpointSpec::TimeToProgression {
+                    observable: "tumor_size".to_string(),
+                    increase_fraction: 0.2,
+                    window_start_days: 0.0,
+                    window_end_days: 180.0,
+                    ref_baseline: false,
+                },
                 span: None,
             },
         ];
@@ -245,9 +269,13 @@ mod tests {
     fn test_cql_includes_fhir_helpers() {
         let endpoint = EndpointDef {
             name: "ORR".to_string(),
-            kind: EndpointKind::BinaryResponse,
-            window_days: 84,
-            threshold: Some(0.3),
+            kind: EndpointKind::Binary,
+            spec: EndpointSpec::ResponseRate {
+                observable: "tumor_size".to_string(),
+                shrink_fraction: 0.3,
+                window_start_days: 0.0,
+                window_end_days: 84.0,
+            },
             span: None,
         };
 

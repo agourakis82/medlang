@@ -14,17 +14,16 @@ use medlangc::datagen::{generate_dataset, DataRow, TrueParams};
 use medlangc::dataload::PKDataset;
 use medlangc::design::{
     default_scenarios_from_scores, evaluate_design_grid, evaluate_design_pos,
-    optimize_design_over_grid, DesignCandidate, DesignConfig, DesignConfigInfo, ObjectiveConfig,
-    PosteriorDraw, QuantumDesignSensitivityReport, QuantumDesignSensitivityResult,
+    optimize_design_over_grid, DesignCandidate, DesignConfig, DesignConfigInfo, ObjectiveConfig, QuantumDesignSensitivityReport, QuantumDesignSensitivityResult,
 };
 use medlangc::diagnostics::{
-    build_trust_report, classify_all, summarize_cmdstan_fit, PriorInflationPolicy,
+    classify_all, summarize_cmdstan_fit, PriorInflationPolicy,
     QuantumPosteriorInfo, QuantumPriorInfo, QuantumPriorPosteriorComparison, SbcConfig,
 };
 use medlangc::interop::{
-    endpoint_to_cql, protocol_endpoints_to_cql, protocol_to_fhir_measures,
+    protocol_endpoints_to_cql, protocol_to_fhir_measures,
     protocol_to_fhir_plan_definition, protocol_to_fhir_research_study, trial_to_adsl_adtr,
-    trial_to_fhir_bundle, AdslRow, AdtrRow,
+    trial_to_fhir_bundle,
 };
 use medlangc::ir::surrogate::IRSurrogateConfig;
 use medlangc::lexer::tokenize;
@@ -32,7 +31,6 @@ use medlangc::lower::{lower_program, lower_program_with_qm};
 use medlangc::parser::{parse_program, parse_protocol_from_tokens};
 use medlangc::portfolio::{evaluate_portfolio, evaluate_portfolio_design_grid};
 use medlangc::qm_stub::QuantumStub;
-use medlangc::registry::{Registry, RunId, RunKind};
 use medlangc::registry::{Registry, RunId, RunKind};
 use medlangc::stanrun::{
     compile_stan_model, detect_cmdstan, print_diagnostics, run_stan_mcmc, StanConfig,
@@ -99,16 +97,6 @@ enum Commands {
         verbose: bool,
     },
 
-    /// Check MedLang source for syntax and type errors
-    Check {
-        /// Input MedLang source file
-        #[arg(value_name = "INPUT")]
-        input: PathBuf,
-
-        /// Verbose output showing all stages
-        #[arg(short, long)]
-        verbose: bool,
-    },
 
     /// Convert CSV data to Stan JSON format
     ConvertData {
@@ -642,7 +630,7 @@ fn main() -> Result<()> {
             seed,
             verbose,
         } => generate_data_command(n_subjects, output, dose_amount, seed, verbose),
-        Commands::Check { input, verbose } => check_command(input, verbose),
+        Commands::Check { module, include_paths, verbose } => check_command(module, include_paths, verbose),
         Commands::ConvertData {
             input,
             output,
@@ -795,11 +783,7 @@ fn main() -> Result<()> {
             output,
             verbose,
         ),
-        Commands::Check {
-            module,
-            include_paths,
-            verbose,
-        } => check_command(module, include_paths, verbose),
+
         Commands::Build {
             module,
             output_dir,
@@ -1266,46 +1250,6 @@ fn generate_data_command(
     Ok(())
 }
 
-fn check_command(input: PathBuf, verbose: bool) -> Result<()> {
-    if verbose {
-        eprintln!("Checking: {}", input.display());
-    }
-
-    // Read source
-    let source = fs::read_to_string(&input)
-        .with_context(|| format!("Failed to read input file: {}", input.display()))?;
-
-    // Stage 1: Tokenization
-    if verbose {
-        eprintln!("Stage 1: Tokenization...");
-    }
-    let tokens = tokenize(&source).with_context(|| "Tokenization failed")?;
-    if verbose {
-        eprintln!("  ✓ {} tokens", tokens.len());
-    }
-
-    // Stage 2: Parsing
-    if verbose {
-        eprintln!("Stage 2: Parsing...");
-    }
-    let ast = parse_program(&tokens).with_context(|| "Parsing failed")?;
-    if verbose {
-        eprintln!("  ✓ {} declarations", ast.declarations.len());
-    }
-
-    // Stage 3: Type checking
-    if verbose {
-        eprintln!("Stage 3: Type checking...");
-    }
-    let _ir = lower_program(&ast).with_context(|| "Type checking failed")?;
-    if verbose {
-        eprintln!("  ✓ Type checking passed");
-    }
-
-    println!("✓ All checks passed: {}", input.display());
-
-    Ok(())
-}
 
 fn write_csv(path: &PathBuf, dataset: &[DataRow]) -> Result<()> {
     let mut csv_content = String::new();
@@ -1533,7 +1477,7 @@ fn analyze_trial_command(
 
         for (endpoint_name, endpoint_result) in &arm_result.endpoints {
             match endpoint_result {
-                medlangc::data::EndpointAnalysisResult::Binary {
+                medlangc::data::EndpointResult::Binary {
                     n_responders,
                     response_rate,
                 } => {
@@ -1545,11 +1489,10 @@ fn analyze_trial_command(
                         arm_result.n_included
                     );
                 }
-                medlangc::data::EndpointAnalysisResult::TimeToEvent {
+                medlangc::data::EndpointResult::TimeToEvent {
                     n_events,
                     n_censored,
                     median_days,
-                    ..
                 } => {
                     let median_str = median_days
                         .map(|d| format!("{:.1} days", d))
@@ -1692,6 +1635,7 @@ fn compare_trials_command(
                     absolute_difference,
                     relative_difference,
                     chi_square_test,
+                    ..
                 } => {
                     println!("  {} (Binary):", endpoint_name);
                     println!("    Virtual ORR:   {:.1}%", orr_virtual * 100.0);
@@ -2269,7 +2213,7 @@ fn export_fhir_command(
     }
 
     // If trial data provided, create Bundle
-    if let Some(data_path) = trial_data {
+    if let Some(data_path) = &trial_data {
         let trial_json = fs::read_to_string(&data_path)
             .with_context(|| format!("Failed to read trial data: {}", data_path.display()))?;
 
@@ -3071,9 +3015,9 @@ fn portfolio_design_grid_command(
 
 /// Check command: Parse and validate a module without code generation
 fn check_command(module: PathBuf, include_paths: Vec<PathBuf>, verbose: bool) -> Result<()> {
-    use medlangc::ast::ModulePath;
-    use medlangc::loader::{ModuleLoader, ModuleResolver};
-    use medlangc::resolve::NameResolver;
+    
+    use medlangc::loader::ModuleLoader;
+    
 
     if verbose {
         println!("Checking module: {}", module.display());
@@ -3113,7 +3057,7 @@ fn build_command(
     include_paths: Vec<PathBuf>,
     verbose: bool,
 ) -> Result<()> {
-    use medlangc::loader::{ModuleLoader, ModuleResolver};
+    use medlangc::loader::ModuleLoader;
     use std::fs;
 
     if verbose {
@@ -3218,7 +3162,7 @@ fn design_optimize_command(
     let candidates = DesignCandidate::grid(
         &n_per_arm,
         &orr_margin,
-        dlt_threshold.as_ref().map(|v| v.as_slice()),
+        dlt_threshold.as_ref().map(|v| v.as_slice()).unwrap_or(&[0.25]),
     );
 
     if verbose {
@@ -3271,7 +3215,8 @@ fn design_optimize_command(
     println!("Report saved to: {}", output_path.display());
     println!();
 
-    if let Some(opt) = &optimization_report.optimal_design {
+    {
+        let opt = &optimization_report.optimal_design;
         println!("Optimal Design:");
         println!("  N per arm: {}", opt.candidate.n_per_arm);
         println!("  ORR margin: {:.3}", opt.candidate.orr_margin);
@@ -3286,9 +3231,6 @@ fn design_optimize_command(
             println!("  Toxicity risk: {:.3}", tox);
         }
         println!("  Total sample size: {}", opt.metrics.sample_size_total);
-        println!();
-    } else {
-        println!("No feasible designs found in grid.");
         println!();
     }
 
@@ -3346,20 +3288,21 @@ fn design_optimize_command(
     println!("Grid Summary:");
     println!(
         "  Candidates evaluated: {}",
-        optimization_report.all_results.len()
+        optimization_report.results.len()
     );
     println!(
         "  Pareto frontier size: {}",
         optimization_report.pareto_frontier.len()
     );
 
-    if let Some(opt) = &optimization_report.optimal_design {
+    {
+        let opt = &optimization_report.optimal_design;
         let avg_utility: f64 = optimization_report
-            .all_results
+            .results
             .iter()
             .map(|r| r.utility)
             .sum::<f64>()
-            / optimization_report.all_results.len() as f64;
+            / optimization_report.results.len() as f64;
         let improvement = ((opt.utility - avg_utility) / avg_utility.abs()) * 100.0;
         println!("  Average utility: {:.4}", avg_utility);
         println!("  Optimal improvement: {:.1}% above average", improvement);

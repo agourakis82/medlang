@@ -199,7 +199,7 @@ impl EvalScenario {
         // Generate realistic covariate values
         let age = rng.gen_range(18.0..80.0);
         let weight = rng.gen_range(50.0..120.0);
-        let bmi = weight / ((rng.gen_range(1.5..2.0)).powi(2));
+        let bmi = weight / ((rng.gen_range(1.5f64..2.0f64)).powi(2));
 
         let mut covariates = HashMap::new();
         covariates.insert("age".to_string(), age);

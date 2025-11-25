@@ -132,7 +132,7 @@ pub enum Stmt {
     Let(LetDecl),
 
     /// Assert statement: assert condition, "message"; (Week 28)
-    Assert(crate::ast::AssertStmt),
+    Assert(AssertStmt),
 
     /// Expression statement
     Expr(Expr),
@@ -144,6 +144,19 @@ pub struct LetDecl {
     pub name: Ident,
     pub ty: Option<TypeAnn>, // Optional type annotation
     pub expr: Expr,
+}
+
+/// Assert statement for L₀
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AssertStmt {
+    /// The boolean condition to check
+    pub condition: Expr,
+
+    /// Optional failure message
+    pub message: Option<String>,
+
+    /// Source location
+    pub span: Option<crate::ast::Span>,
 }
 
 // =============================================================================
@@ -186,6 +199,49 @@ pub enum Expr {
 
     /// Block expression: { stmts }
     BlockExpr(Block),
+
+    /// Enum variant constructor: Enum::Variant
+    EnumVariant(Ident, Ident),
+
+    /// Match expression
+    Match {
+        scrutinee: Box<Expr>,
+        arms: Vec<MatchArm>,
+    },
+}
+
+/// Match arm: pattern => expr
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MatchArm {
+    pub pattern: MatchPattern,
+    pub body: Expr,
+}
+
+impl MatchArm {
+    pub fn new(pattern: MatchPattern, body: Expr) -> Self {
+        Self { pattern, body }
+    }
+}
+
+/// Pattern for matching
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum MatchPattern {
+    /// Enum variant pattern: Enum::Variant
+    Variant {
+        enum_name: Ident,
+        variant_name: Ident,
+    },
+    /// Wildcard pattern: _
+    Wildcard,
+}
+
+impl MatchPattern {
+    pub fn variant(enum_name: Ident, variant_name: Ident) -> Self {
+        Self::Variant { enum_name, variant_name }
+    }
+    pub fn wildcard() -> Self {
+        Self::Wildcard
+    }
 }
 
 impl Expr {

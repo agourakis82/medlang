@@ -24,16 +24,16 @@ pub trait StateDiscretizer {
 #[derive(Debug, Clone)]
 pub struct BoxDiscretizer {
     /// Number of bins per dimension
-    bins_per_dim: Vec<usize>,
+    pub bins_per_dim: Vec<usize>,
 
     /// Minimum value for each dimension
-    min_vals: Vec<f64>,
+    pub min_vals: Vec<f64>,
 
     /// Maximum value for each dimension
-    max_vals: Vec<f64>,
+    pub max_vals: Vec<f64>,
 
     /// Total number of discrete states
-    total_states: usize,
+    pub total_states: usize,
 }
 
 impl BoxDiscretizer {

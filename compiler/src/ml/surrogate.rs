@@ -5,6 +5,7 @@
 use super::backend::BackendKind;
 use std::fmt;
 use uuid::Uuid;
+use serde::Serialize;
 
 /// Handle to a trained surrogate model
 ///
@@ -62,7 +63,7 @@ impl fmt::Display for SurrogateModelHandle {
 ///
 /// This mirrors the MedLang `SurrogateTrainConfig` record type
 /// defined in stdlib/med/ml/surrogate.medlang
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SurrogateTrainConfig {
     /// Number of mechanistic simulations to generate for training
     pub n_train: i64,

@@ -4,7 +4,7 @@
 // - Enum variant constructors (Response::CR)
 // - Match expressions with exhaustiveness checking
 
-use crate::ast::{Expr, ExprKind, MatchArm, MatchPattern};
+use crate::ast::core_lang::{Expr, MatchArm, MatchPattern};
 use crate::typecheck::{FnEnv, TypeEnv, TypeError};
 use crate::types::core_lang::CoreType;
 use crate::types::enum_types::EnumEnv;
@@ -36,13 +36,13 @@ pub fn typecheck_enum_variant(
 /// Type check a match expression
 pub fn typecheck_match(
     env: &mut TypeEnv,
-    fn_env: &FnEnv,
+    _fn_env: &FnEnv, // Unused but kept for API consistency if needed
     enum_env: &EnumEnv,
     scrutinee: &Expr,
     arms: &[MatchArm],
 ) -> Result<CoreType, TypeError> {
     // Type check the scrutinee
-    let scrutinee_ty = crate::typecheck::core_lang::typecheck_expr(env, fn_env, scrutinee)?;
+    let scrutinee_ty = crate::typecheck::core_lang::typecheck_expr(env, scrutinee)?;
 
     // Scrutinee must be an enum type
     let enum_name = match &scrutinee_ty {
@@ -102,7 +102,7 @@ pub fn typecheck_match(
         }
 
         // Type check arm body
-        let arm_ty = crate::typecheck::core_lang::typecheck_expr(env, fn_env, &arm.body)?;
+        let arm_ty = crate::typecheck::core_lang::typecheck_expr(env, &arm.body)?;
 
         // All arms must have the same type
         if let Some(ref expected_ty) = result_type {
@@ -141,7 +141,7 @@ pub fn typecheck_match(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::Expr;
+    use crate::ast::core_lang::Expr;
     use crate::typecheck::{DomainEnv, FnEnv, TypeEnv};
     use crate::types::enum_types::EnumInfo;
 
@@ -192,22 +192,23 @@ mod tests {
     #[test]
     fn test_typecheck_match_success() {
         let enum_env = setup_response_enum();
-        let mut type_env = TypeEnv::new();
-        type_env.bind("resp".to_string(), CoreType::Enum("Response".to_string()));
+        let domain_env = DomainEnv::new();
+        let fn_env = FnEnv::new(domain_env);
+        let mut type_env = TypeEnv::new(&fn_env);
+        
+        type_env.add_var("resp".to_string(), CoreType::Enum("Response".to_string()));
 
-        let fn_env = FnEnv::new(DomainEnv::new());
-
-        let scrutinee = Expr::ident("resp".to_string());
+        let scrutinee = Expr::var("resp".to_string());
         let arms = vec![
             MatchArm::new(
                 MatchPattern::variant("Response".to_string(), "CR".to_string()),
-                Expr::literal(1.0),
+                Expr::float(1.0),
             ),
             MatchArm::new(
                 MatchPattern::variant("Response".to_string(), "PR".to_string()),
-                Expr::literal(0.7),
+                Expr::float(0.7),
             ),
-            MatchArm::new(MatchPattern::wildcard(), Expr::literal(0.0)),
+            MatchArm::new(MatchPattern::wildcard(), Expr::float(0.0)),
         ];
 
         let result = typecheck_match(&mut type_env, &fn_env, &enum_env, &scrutinee, &arms);
@@ -218,15 +219,16 @@ mod tests {
     #[test]
     fn test_typecheck_match_non_enum_scrutinee() {
         let enum_env = setup_response_enum();
-        let mut type_env = TypeEnv::new();
-        type_env.bind("x".to_string(), CoreType::Int);
+        let domain_env = DomainEnv::new();
+        let fn_env = FnEnv::new(domain_env);
+        let mut type_env = TypeEnv::new(&fn_env);
+        
+        type_env.add_var("x".to_string(), CoreType::Int);
 
-        let fn_env = FnEnv::new(DomainEnv::new());
-
-        let scrutinee = Expr::ident("x".to_string());
+        let scrutinee = Expr::var("x".to_string());
         let arms = vec![MatchArm::new(
             MatchPattern::variant("Response".to_string(), "CR".to_string()),
-            Expr::literal(1.0),
+            Expr::float(1.0),
         )];
 
         let result = typecheck_match(&mut type_env, &fn_env, &enum_env, &scrutinee, &arms);
@@ -240,29 +242,32 @@ mod tests {
     #[test]
     fn test_typecheck_match_arm_type_mismatch() {
         let enum_env = setup_response_enum();
-        let mut type_env = TypeEnv::new();
-        type_env.bind("resp".to_string(), CoreType::Enum("Response".to_string()));
+        let domain_env = DomainEnv::new();
+        let fn_env = FnEnv::new(domain_env);
+        let mut type_env = TypeEnv::new(&fn_env);
+        
+        type_env.add_var("resp".to_string(), CoreType::Enum("Response".to_string()));
 
-        let fn_env = FnEnv::new(DomainEnv::new());
-
-        let scrutinee = Expr::ident("resp".to_string());
+        let scrutinee = Expr::var("resp".to_string());
         let arms = vec![
             MatchArm::new(
                 MatchPattern::variant("Response".to_string(), "CR".to_string()),
-                Expr::literal(1.0), // Float
+                Expr::float(1.0),
             ),
             MatchArm::new(
                 MatchPattern::variant("Response".to_string(), "PR".to_string()),
-                Expr {
-                    kind: ExprKind::Literal(crate::ast::Literal::Float(1.0)),
-                    span: None,
-                }, // Int would cause mismatch - using float for consistency
+                // Int literal? CoreLang has IntLiteral. 
+                // CoreType::Int != CoreType::Float.
+                Expr::int(1), 
             ),
-            MatchArm::new(MatchPattern::wildcard(), Expr::literal(0.0)),
+            MatchArm::new(MatchPattern::wildcard(), Expr::float(0.0)),
         ];
 
         let result = typecheck_match(&mut type_env, &fn_env, &enum_env, &scrutinee, &arms);
-        // This should succeed since all arms are floats
-        assert!(result.is_ok());
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            TypeError::MatchArmTypeMismatch { .. }
+        ));
     }
 }

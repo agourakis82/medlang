@@ -7,6 +7,8 @@
 pub mod logging;
 pub mod storage;
 
+pub use storage::Registry;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;

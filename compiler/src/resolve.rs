@@ -242,6 +242,7 @@ impl NameResolver {
             Declaration::Cohort(_) => SymbolKind::Cohort,
             Declaration::Protocol(_) => SymbolKind::Protocol,
             Declaration::Evidence(_) => SymbolKind::EvidenceProgram,
+            _ => panic!("Unsupported declaration kind for symbol resolution"),
         }
     }
 

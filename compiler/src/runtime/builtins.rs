@@ -695,14 +695,12 @@ fn builtin_train_policy_rl(args: Vec<RuntimeValue>) -> Result<RuntimeValue, Runt
     };
 
     // Create environment
-    let mut env = DoseToxEnv::new(env_cfg)
-        .map_err(|e| RuntimeError::Custom(format!("Failed to create RL environment: {}", e)))?;
+    let mut env = DoseToxEnv::new(env_cfg);
 
     // Create state discretizer with reasonable defaults for dose-tox environment
     // State space: [ANC (0-2), tumour_ratio (0-2), prev_dose_norm (0-1), cycle (0-n_cycles)]
-    let discretizer = BoxDiscretizer::uniform(
-        4,  // state_dim
-        10, // bins per dimension
+    let discretizer = BoxDiscretizer::new(
+        vec![10; 4], // bins per dimension
         vec![0.0, 0.0, 0.0, 0.0],
         vec![2.0, 2.0, 1.0, n_cycles as f64],
     );
@@ -850,8 +848,7 @@ fn builtin_simulate_policy_rl(args: Vec<RuntimeValue>) -> Result<RuntimeValue, R
         seed: Some(98765), // Different seed for evaluation
     };
 
-    let mut env = DoseToxEnv::new(env_cfg)
-        .map_err(|e| RuntimeError::Custom(format!("Failed to create RL environment: {}", e)))?;
+    let mut env = DoseToxEnv::new(env_cfg);
 
     // Rebuild discretizer from policy metadata
     let discretizer = BoxDiscretizer::new(
@@ -867,7 +864,7 @@ fn builtin_simulate_policy_rl(args: Vec<RuntimeValue>) -> Result<RuntimeValue, R
 
     // Evaluate the policy
     use crate::rl::evaluate_policy;
-    let eval_report = evaluate_policy(&mut env, policy, &discretizer, n_episodes, &mut rng)
+    let eval_report = evaluate_policy(&mut env, policy, &discretizer, n_episodes)
         .map_err(|e| RuntimeError::Custom(format!("Policy evaluation failed: {}", e)))?;
 
     // Convert evaluation report to RuntimeValue

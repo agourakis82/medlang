@@ -139,18 +139,20 @@ impl DoseToxEnv {
     }
 
     /// Simulate one treatment cycle with given dose
-    fn simulate_cycle(&mut self, dose_mg: f64) -> (f64, f64, Vec<String>) {
+    fn simulate_cycle_internal(
+        rng: &mut ChaCha20Rng,
+        patient: &PatientState,
+        dose_mg: f64,
+    ) -> (f64, f64, Vec<String>) {
         // Simplified QSP-like dynamics
         // In reality, this would call the actual QSP model or surrogate
-
-        let patient = self.patient.as_ref().unwrap();
 
         // Efficacy: Higher dose → more tumour reduction
         let dose_effect = (dose_mg / 300.0).min(1.0); // Normalize to [0, 1]
         let efficacy = 0.95_f64.powf(dose_effect * 2.0); // Exponential decay
 
         // Add stochasticity
-        let efficacy_noise = self.rng.gen_range(0.95..1.05);
+        let efficacy_noise = rng.gen_range(0.95..1.05);
         let new_tumour = (patient.tumour_size * efficacy * efficacy_noise).max(0.0);
 
         // Toxicity: Higher dose → lower ANC
@@ -158,7 +160,7 @@ impl DoseToxEnv {
         let anc_reduction = 0.92_f64.powf(tox_effect * 3.0); // Deeper reduction at high doses
 
         // Add stochasticity
-        let anc_noise = self.rng.gen_range(0.95..1.05);
+        let anc_noise = rng.gen_range(0.95..1.05);
         let new_anc = (patient.anc * anc_reduction * anc_noise).max(0.0);
 
         // Check contracts (safety thresholds)
@@ -189,8 +191,8 @@ impl DoseToxEnv {
     }
 
     /// Compute reward from state transition
-    fn compute_reward(
-        &self,
+    fn compute_reward_internal(
+        cfg: &DoseToxEnvConfig,
         prev_tumour: f64,
         new_tumour: f64,
         prev_anc: f64,
@@ -199,14 +201,14 @@ impl DoseToxEnv {
     ) -> (f64, StepInfo) {
         // Efficacy reward: Reduction in tumour size
         let tumour_reduction = prev_tumour - new_tumour;
-        let efficacy_reward = self.cfg.reward_response_weight * tumour_reduction;
+        let efficacy_reward = cfg.reward_response_weight * tumour_reduction;
 
         // Toxicity penalty: Reduction in ANC
         let anc_reduction = (prev_anc - new_anc).max(0.0);
-        let toxicity_penalty = self.cfg.reward_tox_penalty * anc_reduction;
+        let toxicity_penalty = cfg.reward_tox_penalty * anc_reduction;
 
         // Contract penalty
-        let contract_penalty = self.cfg.contract_penalty * violations.len() as f64;
+        let contract_penalty = cfg.contract_penalty * violations.len() as f64;
 
         // Total reward
         let reward = efficacy_reward - toxicity_penalty - contract_penalty;
@@ -250,29 +252,40 @@ impl RLEnv for DoseToxEnv {
             anyhow::bail!("Invalid action: {} >= {}", action, self.num_actions());
         }
 
-        let patient = self.patient.as_mut().unwrap();
-
-        // Get dose from action
+        // Get dose from action (before mutable borrow of patient if needed, but here it is from cfg)
         let dose_mg = self.cfg.dose_levels_mg[action];
 
-        // Simulate one cycle
+        // Simulate one cycle (borrowing patient immutably)
+        let (new_anc, new_tumour, violations) = {
+            let patient = self.patient.as_ref().unwrap();
+            Self::simulate_cycle_internal(&mut self.rng, patient, dose_mg)
+        };
+
+        // Update patient state (mutable borrow)
+        let patient = self.patient.as_mut().unwrap();
+        
         let prev_tumour = patient.tumour_size;
         let prev_anc = patient.anc;
 
-        let (new_anc, new_tumour, violations) = self.simulate_cycle(dose_mg);
-
-        // Update patient state
         patient.anc = new_anc;
         patient.tumour_size = new_tumour;
         patient.prev_dose = dose_mg / 300.0; // Normalize
         patient.cycle += 1;
+        
+        let cycle = patient.cycle; // Copy for done check
 
-        // Compute reward
-        let (reward, info) =
-            self.compute_reward(prev_tumour, new_tumour, prev_anc, new_anc, &violations);
+        // Compute reward (borrowing cfg)
+        let (reward, info) = Self::compute_reward_internal(
+            &self.cfg,
+            prev_tumour,
+            new_tumour,
+            prev_anc,
+            new_anc,
+            &violations,
+        );
 
         // Check if episode is done
-        let done = patient.cycle > self.cfg.n_cycles
+        let done = cycle > self.cfg.n_cycles
             || new_anc < 0.125  // Critical toxicity - terminate
             || new_tumour < 0.05; // Complete response - success!
 

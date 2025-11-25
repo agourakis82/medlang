@@ -64,7 +64,7 @@ impl PolicyStepLogRow {
             step,
             tumour: obs.tumour,
             anc: obs.anc,
-            cycle: obs.cycle,
+            cycle: obs.cycle as usize,
             time_days: obs.time_days,
             cumulative_dose_mg: obs.cumulative_dose_mg,
             latent_state: obs.latent_state.clone(),

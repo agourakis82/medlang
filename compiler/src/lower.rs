@@ -662,6 +662,7 @@ fn lower_expr(expr: &Expr) -> IRExpr {
             let ir_args: Vec<_> = args.iter().map(|arg| lower_expr(&arg.value)).collect();
             IRExpr::call(name, ir_args)
         }
+        _ => panic!("Unsupported expression kind for lowering"),
     }
 }
 

@@ -215,13 +215,13 @@ fn build_builtin_signatures() -> HashMap<String, TypedFnSig> {
         TypedFnSig::new(
             vec![
                 EvidenceProgram,
-                Record(vec![
+                Record(HashMap::from([
                     ("n_train".to_string(), Int),
                     ("backend".to_string(), String), // Will become Enum("BackendKind")
                     ("seed".to_string(), Int),
                     ("max_epochs".to_string(), Int),
                     ("batch_size".to_string(), Int),
-                ]),
+                ])),
             ],
             SurrogateModel,
         ),
@@ -339,8 +339,8 @@ pub fn typecheck_fn(fn_def: &FnDef, fn_env: &FnEnv) -> Result<TypedFnSig, TypeEr
     // For now, allow Unit body for any return type (implicit return)
     if body_ty != ret_type && body_ty != CoreType::Unit {
         return Err(TypeError::ReturnTypeMismatch {
-            expected: ret_type.as_str(),
-            found: body_ty.as_str(),
+            expected: ret_type.as_str().to_string(),
+            found: body_ty.as_str().to_string(),
         });
     }
 
@@ -362,7 +362,7 @@ pub fn typecheck_block(env: &mut TypeEnv, block: &Block) -> Result<CoreType, Typ
                 let cond_ty = typecheck_expr(env, &assert_stmt.condition)?;
                 if cond_ty != CoreType::Bool {
                     return Err(TypeError::Mismatch {
-                        expected: "Bool",
+                        expected: "Bool".to_string(),
                         found: cond_ty.as_str(),
                     });
                 }
@@ -386,8 +386,8 @@ fn typecheck_let(env: &mut TypeEnv, let_decl: &LetDecl) -> Result<CoreType, Type
         let declared_ty = resolve_type_ann(ann);
         if declared_ty != expr_ty {
             return Err(TypeError::Mismatch {
-                expected: declared_ty.as_str(),
-                found: expr_ty.as_str(),
+                expected: declared_ty.as_str().to_string(),
+                found: expr_ty.as_str().to_string(),
             });
         }
         env.add_var(let_decl.name.clone(), declared_ty);
@@ -437,7 +437,7 @@ pub fn typecheck_expr(env: &mut TypeEnv, expr: &Expr) -> Result<CoreType, TypeEr
                 Record(map) => map.get(field).cloned().ok_or(TypeError::NoSuchField {
                     field: field.clone(),
                 }),
-                other => Err(TypeError::NotARecord(other.as_str())),
+                other => Err(TypeError::NotARecord(other.as_str().to_string())),
             }
         }
 
@@ -448,7 +448,7 @@ pub fn typecheck_expr(env: &mut TypeEnv, expr: &Expr) -> Result<CoreType, TypeEr
         } => {
             let c_ty = typecheck_expr(env, cond)?;
             if c_ty != Bool {
-                return Err(TypeError::CondNotBool(c_ty.as_str()));
+                return Err(TypeError::CondNotBool(c_ty.as_str().to_string()));
             }
 
             let t_ty = typecheck_expr(env, then_branch)?;
@@ -457,8 +457,8 @@ pub fn typecheck_expr(env: &mut TypeEnv, expr: &Expr) -> Result<CoreType, TypeEr
             // Require exactly equal types for branches in Week 26
             if t_ty != e_ty {
                 return Err(TypeError::Mismatch {
-                    expected: t_ty.as_str(),
-                    found: e_ty.as_str(),
+                    expected: t_ty.as_str().to_string(),
+                    found: e_ty.as_str().to_string(),
                 });
             }
 
@@ -491,8 +491,8 @@ pub fn typecheck_expr(env: &mut TypeEnv, expr: &Expr) -> Result<CoreType, TypeEr
                 let arg_ty = typecheck_expr(env, arg_expr)?;
                 if &arg_ty != expected_ty {
                     return Err(TypeError::Mismatch {
-                        expected: expected_ty.as_str(),
-                        found: arg_ty.as_str(),
+                        expected: expected_ty.as_str().to_string(),
+                        found: arg_ty.as_str().to_string(),
                     });
                 }
             }
@@ -501,6 +501,22 @@ pub fn typecheck_expr(env: &mut TypeEnv, expr: &Expr) -> Result<CoreType, TypeEr
         }
 
         Expr::BlockExpr(block) => typecheck_block(env, block),
+
+        Expr::EnumVariant(enum_name, _variant_name) => {
+            // TODO: Validate against EnumEnv
+            Ok(CoreType::Enum(enum_name.clone()))
+        }
+
+        Expr::Match { scrutinee, arms } => {
+            // TODO: Validate match with enum_check
+            let _scrutinee_ty = typecheck_expr(env, scrutinee)?;
+            if arms.is_empty() {
+                return Ok(CoreType::Unit);
+            }
+            // Assume first arm type for now
+            let arm_ty = typecheck_expr(env, &arms[0].body)?;
+            Ok(arm_ty)
+        }
     }
 }
 

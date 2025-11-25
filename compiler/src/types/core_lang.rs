@@ -6,7 +6,7 @@ use crate::ast::core_lang::TypeAnn;
 use std::collections::HashMap;
 
 /// Core types for L₀ (the host coordination language)
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CoreType {
     // Primitive types
     Int,
