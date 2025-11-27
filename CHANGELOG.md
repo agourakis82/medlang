@@ -164,3 +164,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Darwin PBPK Platform (Julia) v0.4
 - ODE state vector extended to 30+ states (organs + gut + transit + bile + depot)
 - Full backward compatibility with v0.2/v0.3 models
+
+## [1.0.0] - 2024-11-27
+
+### Added
+
+#### QSP Constructs
+- **TMDD (Target-Mediated Drug Disposition)**
+  - Full, QSS, and QE approximations
+  - Parameters: kon, koff, ksyn, kdeg, kint
+  - Derived: Kd, R0, target occupancy
+  - Clinical relevance: mAbs, receptor-targeted drugs
+
+- **Tumor Growth-Kill Models**
+  - Growth: exponential, logistic, gompertz
+  - Kill: emax, linear, simeoni transit
+  - Response classification (RECIST-like)
+  - Parameters: kg, kmax, kk, emax, ec50, gamma
+
+- **Receptor-Ligand Dynamics**
+  - General binding kinetics
+  - Receptor recycling and internalization
+  - Occupancy calculations
+
+- **Enzyme Turnover**
+  - CYP induction (Emax model)
+  - Reversible and time-dependent inhibition
+
+#### ML Integration
+- **ML Parameter Predictor**
+  - Model types: gnn, chemberta, multimodal
+  - Predict: Kp, clearance, solubility
+  - QSPR fallback methods
+
+- **PK Surrogate Model**
+  - Neural network fast prediction
+  - Inputs: dose, CL, Vd, ka, F
+  - Outputs: Cmax, Tmax, AUC, half-life
+
+- **Uncertainty Quantification**
+  - Methods: ensemble, dropout, conformal
+  - Prediction intervals with confidence levels
+
+- **Neural ODE Correction**
+  - Hybrid mechanistic-ML models
+  - Learn residuals from data
+
+#### Track C: Clinical Trial Operators
+- **Covariate Effects**
+  - Types: power, exponential, categorical, linear
+  - Built-in allometric scaling (CL^0.75, V^1.0)
+
+- **Inter-Individual Variability (IIV)**
+  - Distributions: exponential, proportional, additive
+  - Correlation groups for multivariate
+
+- **Virtual Population Generator**
+  - Configurable demographics
+  - Distribution types: normal, uniform, lognormal, categorical
+  - Automatic IIV sampling
+
+- **Dosing Regimen**
+  - Routes: IV, ORAL, SC, IM, INFUSION
+  - Interval-based repeated dosing
+  - Infusion duration support
+
+- **Trial Design**
+  - Multi-arm studies
+  - Customizable endpoints
+  - Sampling schedule specification
+
+- **Bioequivalence Analysis**
+  - Test vs reference comparison
+  - 90% CI for geometric mean ratio
+  - BE limits (80-125%)
+
+- **Exposure-Response Analysis**
+  - Emax model fitting
+  - Efficacy correlation
+
+#### New Examples
+- tmdd_oncology.medlang: Pembrolizumab NSCLC with TMDD + tumor dynamics
+- ml_hybrid_model.medlang: ML-augmented PBPK for drug discovery
+
+### Validation Results
+- QSP structs: TMDD, tumor growth-kill functional (PASS)
+- ML prediction: Kp, clearance QSPR fallback working (PASS)
+- PK surrogate: Analytical solutions verified (PASS)
+- Covariate effects: Allometric scaling correct (PASS)
+- Trial design: Dosing times, arm specs functional (PASS)
+- **5/5 validation tests passed**
+
+### Reference Implementation
+- Darwin PBPK Platform (Julia) v1.0
+- ODE state vector: 37+ states
+- Full backward compatibility with v0.2-v0.4
+- Repository: github.com/agourakis82/darwin-pbpk-platform

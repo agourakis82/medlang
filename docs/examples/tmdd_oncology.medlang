@@ -1,0 +1,223 @@
+// =============================================================================
+// MedLang-D v1.0 Example: TMDD + Tumor Growth-Kill
+// Drug: Pembrolizumab (anti-PD-1 mAb)
+// Indication: Non-Small Cell Lung Cancer (NSCLC)
+// =============================================================================
+
+model Pembrolizumab_NSCLC_PBPK_QSP {
+    description: "TMDD-QSP model for pembrolizumab in NSCLC"
+    version: "1.0.0"
+    
+    // =========================================================================
+    // DRUG PROPERTIES
+    // =========================================================================
+    drug Pembrolizumab {
+        mw: 149000.0,                // g/mol (IgG4)
+        type: "mAb",
+        target: "PD-1",
+        fup: 0.0,                    // Fully bound
+        BP: 0.55                     // Confined to plasma
+    }
+    
+    // =========================================================================
+    // TMDD: PD-1 RECEPTOR BINDING
+    // =========================================================================
+    // High-affinity binding to PD-1 on T cells
+    // Kd ~ 29 pM (very tight binding)
+    
+    tmdd PD1_Binding {
+        // Binding kinetics (literature values)
+        kon: 1.0 1/nM/h,             // Fast association
+        koff: 0.00003 1/h,           // Very slow dissociation
+        
+        // PD-1 turnover on activated T cells
+        ksyn: 0.05 nM/h,
+        kdeg: 0.01 1/h,              // R0 = 5 nM
+        
+        // Complex internalization
+        kint: 0.05 1/h               // Receptor-mediated endocytosis
+    }
+    
+    // =========================================================================
+    // TUMOR GROWTH-KILL MODEL
+    // =========================================================================
+    // Simeoni model with immune-mediated killing
+    
+    tumor NSCLC_Response {
+        // Gompertz growth (typical for solid tumors)
+        growth: gompertz,
+        kg: 0.008 1/day,             // Slow growth rate
+        kmax: 100000 mm3,            // Large carrying capacity
+        
+        // Emax kill model based on target occupancy
+        kill: emax,
+        kk: 0.03 1/day,              // Kill rate when saturated
+        emax: 0.6,                   // 60% max tumor regression
+        ec50: 5.0 nM,                // Target occupancy for effect
+        gamma: 2.0,                  // Steep Hill coefficient
+        
+        // Simeoni transit compartments
+        n_transit: 4,
+        ktr: 0.3 1/day,
+        
+        // Initial tumor burden (advanced NSCLC)
+        tumor0: 8000 mm3
+    }
+    
+    // =========================================================================
+    // PBPK ORGANS
+    // =========================================================================
+    organ Plasma {
+        volume: 3.0 L,
+        description: "Central compartment"
+    }
+    
+    organ Tumor {
+        volume: 0.008 L,             // 8 cm3 tumor
+        blood_flow: 0.05 L/min,      // High tumor vascularity
+        Kp: 0.3,                     // Limited mAb penetration
+        description: "Target tissue"
+    }
+    
+    organ Spleen {
+        volume: 0.15 L,
+        blood_flow: 0.2 L/min,
+        Kp: 0.4,                     // Lymphoid tissue uptake
+        description: "Immune compartment"
+    }
+    
+    organ Lymph_Nodes {
+        volume: 0.5 L,               // Total LN volume
+        blood_flow: 0.1 L/min,
+        Kp: 0.35,
+        description: "T cell activation site"
+    }
+    
+    // =========================================================================
+    // CLEARANCE
+    // =========================================================================
+    clearance {
+        // Linear clearance (non-specific)
+        linear: 0.2 L/day,
+        
+        // TMDD adds nonlinear clearance at low concentrations
+        // Total CL = CL_linear + CL_TMDD(C)
+    }
+    
+    // =========================================================================
+    // POPULATION VARIABILITY
+    // =========================================================================
+    virtual_population NSCLC_Patients {
+        n_subjects: 200,
+        
+        demographics {
+            WT: normal(75, 18, min=40, max=150),
+            AGE: uniform(45, 85),
+            ECOG: categorical(0=0.3, 1=0.5, 2=0.2),
+            PD_L1: categorical(negative=0.4, low=0.3, high=0.3)
+        }
+        
+        // IIV on key parameters
+        iiv CL {
+            distribution: exponential,
+            omega: 0.35
+        }
+        
+        iiv tumor0 {
+            distribution: lognormal,
+            omega: 0.5               // High variability in baseline tumor
+        }
+    }
+    
+    // Covariate effects
+    covariate WT on CL {
+        type: power,
+        reference: 75 kg,
+        theta: 0.75
+    }
+    
+    covariate ECOG on kg {
+        type: categorical,
+        factors: {
+            "0": 0.8,                // Better PS = slower growth
+            "1": 1.0,
+            "2": 1.3                 // Worse PS = faster growth
+        }
+    }
+    
+    // =========================================================================
+    // DOSING REGIMEN
+    // =========================================================================
+    regimen Q3W_200mg {
+        dose: 200 mg,
+        route: INFUSION,
+        interval: 504 h,             // 3 weeks
+        n_doses: 17,                 // ~1 year treatment
+        infusion_duration: 0.5 h
+    }
+    
+    regimen Q6W_400mg {
+        dose: 400 mg,
+        route: INFUSION,
+        interval: 1008 h,            // 6 weeks
+        n_doses: 9,
+        infusion_duration: 0.5 h
+    }
+    
+    // =========================================================================
+    // TRIAL DESIGN
+    // =========================================================================
+    trial Phase2_NSCLC {
+        arms: [
+            arm Q3W { regimen: Q3W_200mg, n_subjects: 100 },
+            arm Q6W { regimen: Q6W_400mg, n_subjects: 100 }
+        ],
+        duration: 8760 h,            // 1 year
+        endpoints: [
+            Cmax, Ctrough, AUC,
+            target_occupancy,
+            tumor_change_pct,
+            ORR, PFS
+        ]
+    }
+    
+    // =========================================================================
+    // EXPOSURE-RESPONSE
+    // =========================================================================
+    exposure_response Efficacy {
+        exposure: Cavg_ss,           // Average steady-state concentration
+        response: ORR,
+        model: emax,
+        e0: 0.1,                     // 10% baseline response
+        emax: 0.35,                  // Additional 35% with drug
+        ec50: 30 ug/mL,              // ~200 nM
+        gamma: 1.5
+    }
+    
+    // =========================================================================
+    // ENDPOINTS
+    // =========================================================================
+    endpoints {
+        // PK
+        cmax: target > 50 ug/mL,
+        ctrough: target > 10 ug/mL,
+        
+        // Target engagement
+        target_occupancy: {
+            target: "> 90%",
+            at_trough: "> 70%"
+        },
+        
+        // Efficacy (RECIST 1.1)
+        ORR: {
+            definition: "PR + CR",
+            target: "> 30%"
+        },
+        
+        // Tumor shrinkage
+        tumor_change: {
+            best_response: "nadir",
+            waterfall: true
+        }
+    }
+}

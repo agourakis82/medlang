@@ -1,0 +1,248 @@
+// =============================================================================
+// MedLang-D v1.0 Example: ML Hybrid Model
+// Drug: Novel Small Molecule (Discovery Phase)
+// Application: ML-predicted parameters + mechanistic PBPK
+// =============================================================================
+
+model ML_Hybrid_PBPK {
+    description: "ML-augmented PBPK for early drug discovery"
+    version: "1.0.0"
+    
+    // =========================================================================
+    // DRUG PROPERTIES (Input for ML Prediction)
+    // =========================================================================
+    drug Compound_X {
+        smiles: "CC(C)Cc1ccc(cc1)C(C)C(=O)O",  // Ibuprofen-like
+        mw: 350.4,
+        logP: 3.2,
+        pKa: 4.5,
+        hbd: 1,
+        hba: 3,
+        psa: 45.0,
+        rotatable_bonds: 4
+    }
+    
+    // =========================================================================
+    // ML PARAMETER PREDICTORS
+    // =========================================================================
+    
+    // Multimodal encoder for partition coefficients
+    ml_predictor Kp_Predictor {
+        model_type: multimodal,
+        model_path: "models/kp_predictor_v3.bson",
+        
+        predict: [
+            kp_liver, kp_kidney, kp_brain,
+            kp_muscle, kp_adipose, kp_gut
+        ],
+        
+        // Input features
+        inputs: [smiles, logP, pKa, fup],
+        
+        // Fallback if model unavailable
+        fallback: poulin_theil
+    }
+    
+    // GNN for clearance prediction
+    ml_predictor CL_Predictor {
+        model_type: gnn,
+        model_path: "models/cl_gnn_v2.bson",
+        
+        predict: [cl_hepatic, cl_renal],
+        
+        inputs: [smiles, mw, logP, psa],
+        
+        fallback: qspr
+    }
+    
+    // Solubility predictor
+    ml_predictor Sol_Predictor {
+        model_type: chemberta,
+        predict: [solubility, dissolution_rate],
+        fallback: yalkowsky
+    }
+    
+    // =========================================================================
+    // UNCERTAINTY QUANTIFICATION
+    // =========================================================================
+    uncertainty Kp_UQ {
+        method: ensemble,
+        n_samples: 100,
+        confidence: 0.90
+    }
+    
+    uncertainty CL_UQ {
+        method: dropout,
+        n_samples: 50,
+        confidence: 0.95
+    }
+    
+    // =========================================================================
+    // PK SURROGATE (Optional Fast Mode)
+    // =========================================================================
+    surrogate FastPK {
+        inputs: [dose, cl_hepatic, vd, ka, f],
+        outputs: [cmax, tmax, auc, half_life],
+        
+        model_path: "models/pk_surrogate_v1.bson",
+        trained: true,
+        
+        // Use for rapid screening, validate with full PBPK
+        use_for: screening
+    }
+    
+    // =========================================================================
+    // PBPK MODEL (Mechanistic Component)
+    // =========================================================================
+    
+    // Absorption (use predicted solubility)
+    absorption oral {
+        ka: 1.2 h^-1,                // From in vitro
+        fa: ML(Sol_Predictor.fa),    // ML-predicted
+        fg: 0.85,                    // Estimated
+        fh: ML(CL_Predictor.fh),     // ML-predicted
+        lag: 0.25 h
+    }
+    
+    // Organs with ML-predicted Kp
+    organ Liver {
+        volume: 1.5 L,
+        blood_flow: 1.45 L/min,
+        Kp: ML(Kp_Predictor.kp_liver, uncertainty=Kp_UQ)
+    }
+    
+    organ Kidney {
+        volume: 0.31 L,
+        blood_flow: 1.1 L/min,
+        Kp: ML(Kp_Predictor.kp_kidney, uncertainty=Kp_UQ)
+    }
+    
+    organ Brain {
+        volume: 1.4 L,
+        blood_flow: 0.7 L/min,
+        Kp: ML(Kp_Predictor.kp_brain, uncertainty=Kp_UQ),
+        
+        // BBB penetration assessment
+        bbb_penetration: ML_predicted
+    }
+    
+    organ Muscle {
+        volume: 28.0 L,
+        blood_flow: 0.75 L/min,
+        Kp: ML(Kp_Predictor.kp_muscle)
+    }
+    
+    organ Adipose {
+        volume: 14.4 L,
+        blood_flow: 0.26 L/min,
+        Kp: ML(Kp_Predictor.kp_adipose)
+    }
+    
+    // ML-predicted clearance
+    clearance {
+        hepatic: ML(CL_Predictor.cl_hepatic, uncertainty=CL_UQ),
+        renal: ML(CL_Predictor.cl_renal)
+    }
+    
+    // =========================================================================
+    // NEURAL ODE CORRECTION (Advanced)
+    // =========================================================================
+    // Learn residuals between mechanistic model and data
+    
+    neural_ode Correction {
+        state_indices: [blood, liver, kidney],
+        hidden_dim: 32,
+        scaling: 0.1,                // Small corrections
+        
+        // Train on observed data
+        training_data: "data/pk_training.csv"
+    }
+    
+    // =========================================================================
+    // POPULATION FOR SCREENING
+    // =========================================================================
+    virtual_population Screen_Pop {
+        n_subjects: 50,
+        
+        demographics {
+            WT: normal(70, 10),
+            AGE: uniform(25, 55),
+            SEX: categorical(M=0.5, F=0.5)
+        }
+        
+        // Moderate IIV for screening
+        iiv CL {
+            omega: 0.3
+        }
+        iiv Kp {
+            omega: 0.2
+        }
+    }
+    
+    // =========================================================================
+    // DOSE SCREENING
+    // =========================================================================
+    regimen Screen_Low { dose: 10 mg, route: ORAL, interval: 24 h, n_doses: 1 }
+    regimen Screen_Mid { dose: 50 mg, route: ORAL, interval: 24 h, n_doses: 1 }
+    regimen Screen_High { dose: 200 mg, route: ORAL, interval: 24 h, n_doses: 1 }
+    
+    // =========================================================================
+    // SCREENING SIMULATION
+    // =========================================================================
+    trial Dose_Screen {
+        arms: [
+            arm Low { regimen: Screen_Low, n_subjects: 50 },
+            arm Mid { regimen: Screen_Mid, n_subjects: 50 },
+            arm High { regimen: Screen_High, n_subjects: 50 }
+        ],
+        duration: 48 h,
+        endpoints: [Cmax, AUC, Tmax, brain_exposure]
+    }
+    
+    // =========================================================================
+    // ML MODEL VALIDATION
+    // =========================================================================
+    validation {
+        // Compare ML predictions to measured values
+        metrics: [
+            GMFE,                    // Geometric mean fold error
+            AAFE,                    // Average absolute fold error
+            R_squared,
+            within_2fold_pct
+        ],
+        
+        // Acceptance criteria
+        acceptance: {
+            GMFE: "< 2.0",
+            within_2fold: "> 70%"
+        }
+    }
+    
+    // =========================================================================
+    // OUTPUTS
+    // =========================================================================
+    outputs {
+        // ML prediction report
+        ml_predictions: {
+            parameters: [Kp_all, CL, F],
+            with_uncertainty: true,
+            format: "table"
+        },
+        
+        // PK predictions
+        pk_profile: {
+            time_points: 0:0.5:48,
+            compartments: [plasma, liver, brain],
+            with_ci: true
+        },
+        
+        // Go/No-Go recommendation
+        recommendation: {
+            criteria: [
+                "AUC > 10 ug*h/mL",
+                "brain_Kp > 0.3",
+                "half_life > 4 h"
+            ]
+        }
+    }
+}
