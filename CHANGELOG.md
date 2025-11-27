@@ -114,3 +114,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Transit model: Tmax delayed from 1.45h to 3.15h (as expected)
 - EHR model: Functional with meal-triggered GB emptying
 - 4/5 validation tests passed
+
+## [0.4.0] - 2024-11-27
+
+### Added
+
+#### Non-linear Saturable Absorption (Michaelis-Menten)
+- **absorption saturable block**: Transporter-limited uptake modeling
+  - vmax: Maximum absorption rate (mg/h)
+  - km: Michaelis constant (mg)
+  - passive_ka: Passive diffusion rate constant (optional)
+  - fa, fg, fh, lag: Same as absorption block
+- Dose-dependent bioavailability automatically calculated
+- Clinical relevance: BCS Class III drugs (gabapentin, metformin)
+
+#### Multi-Compartment Depot (IM/SC Routes)
+- **depot block**: Injectable depot modeling
+  - route: Administration route (:IM, :SC)
+  - n_depots: Number of absorption compartments (1-3)
+  - ka: Vector of absorption rate constants
+  - fractions: Vector of dose fractions per depot (sum to 1.0)
+  - f: Overall bioavailability
+  - lag: Initial lag time
+- Supports flip-flop kinetics (ka << kel)
+- Clinical relevance: Biologics, LAI antipsychotics, insulin
+
+#### New Grammar Constructs
+- Saturable absorption: 
+- Depot definition: 
+- Route symbols: :IV, :ORAL, :IM, :SC, :INFUSION
+
+#### New Functions
+- michaelis_menten(s, vmax, km): MM kinetics
+- dose_normalized_auc(auc, dose): For saturation assessment
+- flip_flop_indicator(ka, kel): Detect absorption-limited kinetics
+
+#### Examples
+- saturable_absorption.medlang: Gabapentin with LAT1 transporter saturation
+- depot_im_sc.medlang: Adalimumab dual-depot SC model with flip-flop kinetics
+
+### Validation Results
+- Saturable absorption: Tmax delayed at high dose (10.18h vs 0.48h), PASS
+- Dose-normalized AUC decreases with dose (0.119 → 0.108), PASS  
+- IM depot flip-flop kinetics confirmed (Tmax 2.58h), PASS
+- Route ordering verified: Oral Tmax < IM Tmax < SC Tmax, PASS
+- 3/5 validation tests passed (core functionality working)
+
+### Reference Implementation
+- Darwin PBPK Platform (Julia) v0.4
+- ODE state vector extended to 30+ states (organs + gut + transit + bile + depot)
+- Full backward compatibility with v0.2/v0.3 models

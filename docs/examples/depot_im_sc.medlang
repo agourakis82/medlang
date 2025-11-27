@@ -1,0 +1,207 @@
+// =============================================================================
+// MedLang-D v0.4 Example: Multi-Compartment Depot (IM/SC)
+// Drug: Adalimumab (Humira) - Subcutaneous Monoclonal Antibody
+// =============================================================================
+// Demonstrates dual-absorption depot model with flip-flop kinetics
+// typical of subcutaneous biologics
+
+model DepotAbsorptionPBPK {
+    description: "Multi-compartment depot PBPK for SC/IM administration"
+    version: "0.4.0"
+    
+    // =========================================================================
+    // DRUG PARAMETERS (Monoclonal Antibody)
+    // =========================================================================
+    drug Adalimumab {
+        mw: 148000.0,            // g/mol (IgG1)
+        type: "biologic",
+        target: "TNF-alpha",
+        fup: 0.0,                // Fully bound (to target)
+        BP: 0.55,                // Limited to plasma (large molecule)
+        half_life: 14 days       // Characteristic of IgG
+    }
+    
+    // =========================================================================
+    // SUBCUTANEOUS DEPOT DEFINITION (v0.4 feature)
+    // =========================================================================
+    // Two-compartment depot: fast initial + slow sustained release
+    
+    depot sc_dual {
+        route: :SC,
+        n_depots: 2,
+        
+        // Absorption rates (flip-flop kinetics)
+        ka: [0.3 day^-1, 0.05 day^-1],   // Fast and slow components
+        
+        // Fractions (must sum to 1.0)
+        fractions: [0.4, 0.6],            // 40% fast, 60% slow
+        
+        // Bioavailability
+        f: 0.64,                          // 64% SC bioavailability (clinical)
+        
+        // Lag time
+        lag: 0.5 day                      // Initial delay before absorption
+    }
+    
+    // =========================================================================
+    // ALTERNATIVE: INTRAMUSCULAR DEPOT
+    // =========================================================================
+    depot im_single {
+        route: :IM,
+        n_depots: 1,
+        
+        // Faster absorption from IM vs SC
+        ka: [0.5 day^-1],
+        fractions: [1.0],
+        
+        // Higher bioavailability from muscle
+        f: 0.75,                          // 75% IM bioavailability
+        
+        lag: 0.25 day                     // Shorter lag than SC
+    }
+    
+    // =========================================================================
+    // ORGAN PHYSIOLOGY (mAb-specific)
+    // =========================================================================
+    // Monoclonal antibodies have limited tissue distribution
+    
+    organ Plasma {
+        volume: 3.0 L,
+        description: "Primary distribution space"
+    }
+    
+    organ Interstitial {
+        volume: 12.0 L,                   // Lymphatic drainage
+        exchange_rate: 0.1 day^-1,        // Slow equilibration
+        Kp: 0.5                           // Limited penetration
+    }
+    
+    organ Lymph {
+        volume: 2.0 L,
+        flow: 3.6 L/day,                  // Lymphatic flow
+        description: "Absorption pathway for SC"
+    }
+    
+    organ Liver {
+        volume: 1.5 L,
+        blood_flow: 1.45 L/min,
+        Kp: 0.15                          // Low hepatic uptake
+    }
+    
+    organ Spleen {
+        volume: 0.15 L,
+        blood_flow: 0.2 L/min,
+        Kp: 0.3                           // Moderate RES uptake
+    }
+    
+    organ Synovium {
+        volume: 0.05 L,                   // Target tissue (RA)
+        blood_flow: 0.02 L/min,
+        Kp: 0.2,
+        description: "Therapeutic target site"
+    }
+    
+    // =========================================================================
+    // CLEARANCE (Target-Mediated)
+    // =========================================================================
+    clearance {
+        // Linear clearance (non-specific)
+        linear_cl: 12.0 mL/day,
+        
+        // Target-mediated drug disposition (TMDD)
+        tmdd: {
+            kint: 0.1 day^-1,            // Internalization rate
+            kdeg: 0.01 day^-1,           // Target degradation
+            kon: 1e6 M^-1*day^-1,        // Binding on-rate
+            koff: 0.1 day^-1             // Binding off-rate
+        }
+    }
+    
+    // =========================================================================
+    // POPULATION VARIABILITY
+    // =========================================================================
+    population {
+        // IIV on depot parameters
+        iiv_ka_fast: 0.4,                // 40% CV
+        iiv_ka_slow: 0.3,                // 30% CV
+        iiv_f: 0.25,                     // 25% CV on bioavailability
+        
+        // Body weight effect (important for biologics)
+        covariates: [
+            WT -> CL with power(0.75),
+            WT -> V with power(1.0),
+            
+            // Anti-drug antibodies reduce bioavailability
+            ADA_status -> F with factor(-0.3)  // 30% reduction if ADA+
+        ]
+    }
+    
+    // =========================================================================
+    // DOSING PROTOCOLS
+    // =========================================================================
+    
+    protocol SC_Standard {
+        description: "Standard rheumatoid arthritis regimen"
+        loading: 80 mg SC at week 0
+        maintenance: 40 mg SC q2w starting week 2
+        duration: 24 weeks
+    }
+    
+    protocol SC_Weekly {
+        description: "Weekly dosing for inadequate response"
+        dose: 40 mg SC qw
+        duration: 24 weeks
+    }
+    
+    protocol IM_Alternative {
+        description: "IM administration (off-label)"
+        dose: 40 mg IM q2w
+        note: "Faster absorption, higher peak"
+    }
+    
+    // =========================================================================
+    // FLIP-FLOP KINETICS VALIDATION
+    // =========================================================================
+    // Terminal half-life is absorption-rate-limited, not elimination-limited
+    
+    endpoints {
+        // Tmax should be delayed (absorption-limited)
+        tmax: {
+            SC: 4-7 days,                // Slow SC absorption
+            IM: 2-4 days,                // Faster IM absorption
+            IV: immediate                // Reference
+        }
+        
+        // Terminal half-life appears longer for SC/IM
+        terminal_t12: {
+            IV: 10-14 days,              // True elimination t1/2
+            SC: 14-21 days,              // Apparent t1/2 (flip-flop)
+            IM: 12-18 days
+        }
+        
+        // Trough concentrations (efficacy correlate)
+        ctrough: {
+            target: "> 5 ug/mL",         // Therapeutic threshold
+            week_12: "steady state achieved"
+        }
+        
+        // Synovium exposure (target site)
+        synovium_auc: {
+            correlate: "clinical_response"
+        }
+    }
+}
+
+// =============================================================================
+// SIMULATION NOTES
+// =============================================================================
+// 1. Flip-flop kinetics: ka << kel, so terminal phase reflects absorption
+// 2. SC absorption via lymphatics (not direct capillary uptake)
+// 3. Dual-depot captures initial burst + sustained release
+// 4. Body weight is critical covariate for mAb dosing
+// 5. Anti-drug antibodies (ADA) significantly impact F and CL
+//
+// Clinical implications:
+// - SC route preferred for patient self-administration
+// - IM may provide faster onset but similar steady-state
+// - Loading dose accelerates time to steady state
