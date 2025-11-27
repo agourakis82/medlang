@@ -1,0 +1,141 @@
+// MedLang v0.2 Example: Oral Absorption with First-Pass Metabolism
+// Drug: Metoprolol (high hepatic extraction, BCS Class I)
+
+model MetoprololOral {
+    route: ORAL
+    
+    // Absorption kinetics (BCS Class I - high solubility, high permeability)
+    absorption {
+        ka  = 1.2_1/h       // Rapid absorption
+        f   = 0.95          // High fraction absorbed
+        lag = 0.25_h        // 15-minute gastric emptying lag
+    }
+    
+    // First-pass metabolism (CYP2D6 substrate)
+    firstpass {
+        fg = 0.90           // 90% escapes gut metabolism
+        fh = 0.50           // 50% hepatic extraction (high)
+    }
+    
+    // Effective bioavailability: 0.95 * 0.90 * 0.50 = 0.43 (matches literature ~40-50%)
+    
+    // States (simplified 2-compartment)
+    state A_gut     : DoseMass
+    state A_central : DoseMass
+    state A_periph  : DoseMass
+    
+    // PK parameters
+    param V1 : Volume    = 75.0_L      // Central volume
+    param V2 : Volume    = 200.0_L     // Peripheral volume
+    param CL : Clearance = 60.0_L/h    // Total clearance
+    param Q  : Clearance = 30.0_L/h    // Inter-compartmental clearance
+    
+    // ODE system
+    dA_gut/dt     = -Ka * A_gut
+    dA_central/dt =  Ka * A_gut * F * Fg * Fh 
+                     - (CL + Q) / V1 * A_central 
+                     + Q / V2 * A_periph
+    dA_periph/dt  =  Q / V1 * A_central - Q / V2 * A_periph
+    
+    // Observables
+    obs C_plasma : ConcMass = A_central / V1
+    obs C_periph : ConcMass = A_periph / V2
+}
+
+// Population model with IIV on absorption and metabolism
+population MetoprololPop {
+    model MetoprololOral
+    
+    // Population parameters
+    param Ka_pop  : RateConst = 1.2_1/h
+    param F_pop   : Fraction  = 0.95
+    param Fg_pop  : Fraction  = 0.90
+    param Fh_pop  : Fraction  = 0.50
+    param CL_pop  : Clearance = 60.0_L/h
+    param V1_pop  : Volume    = 75.0_L
+    
+    // IIV parameters
+    param omega_Ka : f64 = 0.40    // High variability in absorption
+    param omega_Fh : f64 = 0.35    // CYP2D6 polymorphism effect
+    param omega_CL : f64 = 0.30
+    param omega_V1 : f64 = 0.25
+    
+    // Covariates
+    input WT      : Quantity<kg, f64>
+    input CYP2D6  : f64              // 0=PM, 1=IM, 2=EM, 3=UM
+    
+    // Random effects
+    rand eta_Ka : f64 ~ LogNormal(0.0, omega_Ka)
+    rand eta_Fh : f64 ~ Normal(0.0, omega_Fh)
+    rand eta_CL : f64 ~ Normal(0.0, omega_CL)
+    rand eta_V1 : f64 ~ Normal(0.0, omega_V1)
+    
+    // Individual parameters
+    bind_params(patient) {
+        let w = patient.WT / 70.0_kg
+        
+        // CYP2D6 phenotype effect on Fh
+        let cyp_effect = 1.0 - 0.2 * (patient.CYP2D6 - 2.0)  // PM: +40%, UM: -20%
+        
+        // Absorption
+        model.absorption.Ka = Ka_pop * eta_Ka
+        model.absorption.F  = F_pop
+        
+        // First-pass (CYP2D6 dependent)
+        model.firstpass.Fg  = Fg_pop
+        model.firstpass.Fh  = clamp(Fh_pop * cyp_effect * exp(eta_Fh), 0.1, 0.95)
+        
+        // Systemic PK
+        model.CL = CL_pop * pow(w, 0.75) * exp(eta_CL)
+        model.V1 = V1_pop * w * exp(eta_V1)
+    }
+    
+    use_measure ConcCombinedError for model.C_plasma
+}
+
+// Error model (combined additive + proportional)
+measure ConcCombinedError {
+    pred : ConcMass
+    obs  : ConcMass
+    param sigma_add  : f64 = 0.5      // ng/mL
+    param sigma_prop : f64 = 0.15     // 15% CV
+    
+    log_likelihood = Normal_logpdf(
+        x  = obs - pred,
+        mu = 0.0,
+        sd = sqrt(sigma_add^2 + (sigma_prop * pred)^2)
+    )
+}
+
+// Rich PK sampling timeline
+timeline MetoprololPKStudy {
+    at 0.0_h:
+        dose { 
+            amount = 100.0_mg
+            to     = MetoprololOral.A_gut
+            route  = ORAL
+        }
+    
+    // Absorption phase (dense)
+    at 0.25_h: observe MetoprololOral.C_plasma
+    at 0.5_h:  observe MetoprololOral.C_plasma
+    at 0.75_h: observe MetoprololOral.C_plasma
+    at 1.0_h:  observe MetoprololOral.C_plasma
+    at 1.5_h:  observe MetoprololOral.C_plasma
+    at 2.0_h:  observe MetoprololOral.C_plasma
+    
+    // Distribution/elimination phase
+    at 3.0_h:  observe MetoprololOral.C_plasma
+    at 4.0_h:  observe MetoprololOral.C_plasma
+    at 6.0_h:  observe MetoprololOral.C_plasma
+    at 8.0_h:  observe MetoprololOral.C_plasma
+    at 12.0_h: observe MetoprololOral.C_plasma
+    at 24.0_h: observe MetoprololOral.C_plasma
+}
+
+// Cohort definition
+cohort MetoprololCohort {
+    population MetoprololPop
+    timeline   MetoprololPKStudy
+    data_file  "data/metoprolol_pk.csv"
+}
