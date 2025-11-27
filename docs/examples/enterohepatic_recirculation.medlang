@@ -1,0 +1,154 @@
+// MedLang v0.3 Example: Enterohepatic Recirculation
+// Drug: Mycophenolate mofetil (MMF) - undergoes extensive EHR
+
+model MycophenolateEHR {
+    route: ORAL
+    
+    // Rapid oral absorption
+    absorption {
+        ka  = 2.0_1/h       // Rapid absorption
+        f   = 0.94          // High fraction absorbed
+        lag = 0.0_h         // No lag
+    }
+    
+    // First-pass metabolism
+    firstpass {
+        fg = 0.90           // 90% escapes gut metabolism
+        fh = 0.85           // 15% hepatic extraction
+    }
+    
+    // Enterohepatic recirculation
+    // Creates secondary peaks at 6-12h post-dose
+    ehr {
+        f_bile  = 0.40      // 40% of hepatic drug excreted in bile
+        k_bile  = 0.30_1/h  // Biliary excretion rate
+        f_reabs = 0.90      // 90% reabsorbed from gut
+        k_reabs = 1.0_1/h   // Reabsorption rate
+        t_gb    = 1.0_h     // Gallbladder emptying delay after meal
+    }
+    
+    // States
+    state A_gut     : DoseMass    // Oral absorption site
+    state A_central : DoseMass    // Central compartment
+    state A_periph  : DoseMass    // Peripheral compartment
+    state A_bile    : DoseMass    // Bile/gallbladder
+    state A_reabs   : DoseMass    // Gut reabsorption pool
+    
+    // PK parameters (MPA - active metabolite)
+    param V1 : Volume    = 50.0_L     // Central volume
+    param V2 : Volume    = 100.0_L    // Peripheral volume
+    param CL : Clearance = 15.0_L/h   // Total clearance
+    param Q  : Clearance = 30.0_L/h   // Intercompartmental clearance
+    
+    // Observables
+    obs C_plasma : ConcMass = A_central / V1
+    obs AUC      : AUCUnit  = integral(C_plasma)
+}
+
+// Population with UGT1A9 polymorphism effect on glucuronidation
+population MycophenolatePop {
+    model MycophenolateEHR
+    
+    // Population parameters
+    param Ka_pop    : RateConst = 2.0_1/h
+    param F_pop     : Fraction  = 0.94
+    param Fbile_pop : Fraction  = 0.40
+    param Freabs_pop: Fraction  = 0.90
+    param CL_pop    : Clearance = 15.0_L/h
+    param V1_pop    : Volume    = 50.0_L
+    
+    // IIV
+    param omega_F      : f64 = 0.15
+    param omega_Fbile  : f64 = 0.35
+    param omega_CL     : f64 = 0.30
+    param omega_V1     : f64 = 0.25
+    
+    // Covariates
+    input WT     : Quantity<kg, f64>
+    input UGT1A9 : f64    // 0=poor, 1=normal, 2=extensive metabolizer
+    input ALB    : Quantity<g/dL, f64>  // Albumin (protein binding)
+    
+    // Random effects
+    rand eta_F     : f64 ~ Normal(0.0, omega_F)
+    rand eta_Fbile : f64 ~ Normal(0.0, omega_Fbile)
+    rand eta_CL    : f64 ~ Normal(0.0, omega_CL)
+    rand eta_V1    : f64 ~ Normal(0.0, omega_V1)
+    
+    // Individual parameters
+    bind_params(patient) {
+        let w = patient.WT / 70.0_kg
+        
+        // UGT1A9 effect on glucuronidation and biliary excretion
+        let ugt_effect = 0.8 + 0.2 * patient.UGT1A9
+        
+        // Albumin effect on free fraction
+        let alb_effect = 4.0 / patient.ALB
+        
+        // Absorption
+        model.absorption.f = clamp(F_pop * (1 + eta_F), 0.5, 1.0)
+        
+        // EHR (affected by UGT1A9)
+        model.ehr.f_bile  = clamp(Fbile_pop * ugt_effect * exp(eta_Fbile), 0.1, 0.8)
+        model.ehr.f_reabs = Freabs_pop
+        
+        // Clearance (UGT1A9 and albumin dependent)
+        model.CL = CL_pop * ugt_effect * alb_effect * exp(eta_CL)
+        model.V1 = V1_pop * w * exp(eta_V1)
+    }
+    
+    use_measure ConcCombinedError for model.C_plasma
+}
+
+// Combined error model
+measure ConcCombinedError {
+    pred : ConcMass
+    obs  : ConcMass
+    param sigma_add  : f64 = 0.1
+    param sigma_prop : f64 = 0.15
+    
+    log_likelihood = Normal_logpdf(
+        x  = obs - pred,
+        mu = 0.0,
+        sd = sqrt(sigma_add^2 + (sigma_prop * pred)^2)
+    )
+}
+
+// Timeline with meal events to trigger EHR secondary peaks
+timeline EHRStudy {
+    at 0.0_h:
+        dose { amount = 1000.0_mg; to = MycophenolateEHR.A_gut; route = ORAL }
+    
+    // Meals trigger gallbladder emptying -> secondary peaks
+    at 4.0_h:  meal { type = standard }
+    at 8.0_h:  meal { type = standard }
+    
+    // Dense sampling to capture primary and secondary peaks
+    at 0.25_h: observe MycophenolateEHR.C_plasma
+    at 0.5_h:  observe MycophenolateEHR.C_plasma
+    at 1.0_h:  observe MycophenolateEHR.C_plasma
+    at 1.5_h:  observe MycophenolateEHR.C_plasma
+    at 2.0_h:  observe MycophenolateEHR.C_plasma
+    at 3.0_h:  observe MycophenolateEHR.C_plasma
+    at 4.0_h:  observe MycophenolateEHR.C_plasma
+    
+    // Post-meal observations (secondary peak region)
+    at 5.0_h:  observe MycophenolateEHR.C_plasma
+    at 6.0_h:  observe MycophenolateEHR.C_plasma
+    at 7.0_h:  observe MycophenolateEHR.C_plasma
+    at 8.0_h:  observe MycophenolateEHR.C_plasma
+    
+    // Second secondary peak region
+    at 9.0_h:  observe MycophenolateEHR.C_plasma
+    at 10.0_h: observe MycophenolateEHR.C_plasma
+    at 12.0_h: observe MycophenolateEHR.C_plasma
+    
+    // Terminal phase
+    at 16.0_h: observe MycophenolateEHR.C_plasma
+    at 24.0_h: observe MycophenolateEHR.C_plasma
+}
+
+cohort MycophenolateCohort {
+    population MycophenolatePop
+    timeline   EHRStudy
+    data_file  "data/mmf_pk.csv"
+}

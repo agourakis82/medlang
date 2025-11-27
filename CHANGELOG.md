@@ -77,3 +77,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - one_comp_oral_pk.medlang: Basic 1-compartment oral PK
 - two_comp_iv.medlang: 2-compartment IV bolus
 - pbpk_2comp_simple.medlang: Simple PBPK model
+
+## [0.3.0] - 2024-11-27
+
+### Added
+
+#### Transit Compartment Absorption (CAT Model)
+- **transit block**: Multi-compartment absorption modeling
+  - n: Number of transit compartments (1-10)
+  - ktr: Transit rate constant (1/h)
+  - mtt: Mean transit time (alternative to ktr)
+  - ka: Final absorption rate constant
+  - f, fg, fh, lag: Same as absorption block
+
+#### Enterohepatic Recirculation (EHR)
+- **ehr block**: Biliary excretion and intestinal reabsorption
+  - f_bile: Fraction excreted in bile
+  - k_bile: Biliary excretion rate constant
+  - f_reabs: Fraction reabsorbed from gut
+  - k_reabs: Reabsorption rate constant
+  - t_gb: Gallbladder emptying delay
+
+#### Timeline Extensions
+- **meal events**: Trigger gallbladder emptying for EHR
+  - meal types: light, standard, high_fat
+
+#### New Functions
+- mean_transit_time(n, ktr): Calculate MTT
+- detect_peaks(conc, time): Find local maxima
+
+#### Examples
+- transit_absorption.medlang: Gabapentin-like with CAT model
+- enterohepatic_recirculation.medlang: Mycophenolate with EHR
+
+### Validation Results
+- Transit model: Tmax delayed from 1.45h to 3.15h (as expected)
+- EHR model: Functional with meal-triggered GB emptying
+- 4/5 validation tests passed

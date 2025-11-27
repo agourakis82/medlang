@@ -1,0 +1,118 @@
+// MedLang v0.3 Example: Transit Compartment Absorption
+// Drug: Gabapentin-like (BCS Class III, saturable absorption)
+
+model GabapentinTransit {
+    route: ORAL
+    
+    // Transit compartment absorption model
+    // Creates delayed, bell-shaped absorption profile
+    transit {
+        n   = 4              // 4 transit compartments
+        mtt = 1.5_h          // Mean transit time 1.5 hours
+        ka  = 1.2_1/h        // Final absorption rate constant
+        f   = 0.6            // 60% bioavailability (saturable transporter)
+        fg  = 1.0            // No gut metabolism
+        fh  = 1.0            // No hepatic first-pass
+        lag = 0.25_h         // 15-minute gastric emptying lag
+    }
+    
+    // Transit compartment states (auto-generated based on n)
+    state A_transit_1 : DoseMass
+    state A_transit_2 : DoseMass
+    state A_transit_3 : DoseMass
+    state A_transit_4 : DoseMass
+    state A_gut       : DoseMass    // Final absorption site
+    state A_central   : DoseMass
+    
+    // PK parameters (Gabapentin-like)
+    param V  : Volume    = 77.0_L     // Large Vd
+    param CL : Clearance = 7.5_L/h    // Renal clearance only
+    
+    // Observables
+    obs C_plasma : ConcMass = A_central / V
+}
+
+// Population model with IIV on transit parameters
+population GabapentinPop {
+    model GabapentinTransit
+    
+    // Population parameters
+    param MTT_pop : Time     = 1.5_h
+    param Ka_pop  : RateConst = 1.2_1/h
+    param F_pop   : Fraction  = 0.6
+    param CL_pop  : Clearance = 7.5_L/h
+    param V_pop   : Volume    = 77.0_L
+    
+    // IIV (high variability in absorption)
+    param omega_MTT : f64 = 0.45
+    param omega_F   : f64 = 0.40
+    param omega_CL  : f64 = 0.25
+    param omega_V   : f64 = 0.30
+    
+    // Covariates
+    input WT   : Quantity<kg, f64>
+    input CRCL : Quantity<mL/min, f64>   // Creatinine clearance
+    
+    // Random effects
+    rand eta_MTT : f64 ~ LogNormal(0.0, omega_MTT)
+    rand eta_F   : f64 ~ Normal(0.0, omega_F)
+    rand eta_CL  : f64 ~ Normal(0.0, omega_CL)
+    rand eta_V   : f64 ~ Normal(0.0, omega_V)
+    
+    // Individual parameters
+    bind_params(patient) {
+        let w = patient.WT / 70.0_kg
+        let rf = patient.CRCL / 100.0_mL/min   // Renal function
+        
+        // Transit absorption (high IIV)
+        model.transit.mtt = MTT_pop * eta_MTT
+        model.transit.f   = clamp(F_pop * (1 + eta_F), 0.2, 1.0)
+        
+        // Clearance (renal function dependent)
+        model.CL = CL_pop * rf * exp(eta_CL)
+        model.V  = V_pop * w * exp(eta_V)
+    }
+    
+    use_measure ConcPropError for model.C_plasma
+}
+
+// Error model
+measure ConcPropError {
+    pred : ConcMass
+    obs  : ConcMass
+    param sigma_prop : f64 = 0.20
+    
+    log_likelihood = Normal_logpdf(
+        x  = (obs - pred) / pred,
+        mu = 0.0,
+        sd = sigma_prop
+    )
+}
+
+// Rich PK sampling to capture delayed absorption
+timeline TransitPKStudy {
+    at 0.0_h:
+        dose { amount = 300.0_mg; to = GabapentinTransit.A_transit_1; route = ORAL }
+    
+    // Dense sampling during absorption phase
+    at 0.5_h:  observe GabapentinTransit.C_plasma
+    at 1.0_h:  observe GabapentinTransit.C_plasma
+    at 1.5_h:  observe GabapentinTransit.C_plasma
+    at 2.0_h:  observe GabapentinTransit.C_plasma
+    at 2.5_h:  observe GabapentinTransit.C_plasma
+    at 3.0_h:  observe GabapentinTransit.C_plasma
+    at 3.5_h:  observe GabapentinTransit.C_plasma
+    at 4.0_h:  observe GabapentinTransit.C_plasma
+    
+    // Elimination phase
+    at 6.0_h:  observe GabapentinTransit.C_plasma
+    at 8.0_h:  observe GabapentinTransit.C_plasma
+    at 12.0_h: observe GabapentinTransit.C_plasma
+    at 24.0_h: observe GabapentinTransit.C_plasma
+}
+
+cohort GabapentinCohort {
+    population GabapentinPop
+    timeline   TransitPKStudy
+    data_file  "data/gabapentin_pk.csv"
+}
