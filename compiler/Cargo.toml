@@ -45,6 +45,14 @@ uuid = { version = "1.6", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 dirs = "5.0"
 
+# Phase V2: SMT Verification with Z3 (optional)
+# Note: Requires Z3 to be installed on system (brew install z3 on macOS)
+z3 = { version = "0.12", optional = true }
+
+[features]
+default = []
+smt-verification = ["z3"]
+
 [dev-dependencies]
 criterion = "0.5"
 tempfile = "3.8"

@@ -32,6 +32,7 @@ pub mod registry; // Week 33: Artifact Registry for reproducible science
 pub mod resolve;
 pub mod rl; // Week 31: Reinforcement Learning for QSP-based policies
 pub mod runtime; // Week 29: L₀ runtime execution support
+pub mod smt; // Phase V2: SMT Verification with Z3
 pub mod stanrun;
 pub mod traits; // Week 53: Trait System (Typeclasses)
 pub mod typecheck;

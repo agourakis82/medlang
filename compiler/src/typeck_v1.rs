@@ -261,6 +261,140 @@ impl V1TypeChecker {
 
         Ok(())
     }
+
+    // =========================================================================
+    // Phase V2: SMT Verification Integration
+    // =========================================================================
+
+    /// Verify all refinement constraints using SMT solver (Phase V2)
+    ///
+    /// This method translates refinement constraints to SMT formulas and uses Z3
+    /// to prove their validity or find counterexamples.
+    ///
+    /// Requires compilation with `--features smt-verification` for full verification.
+    /// Without the feature, warnings are printed but no errors are raised.
+    pub fn verify_constraints_with_smt(&mut self) -> Result<(), V1TypeError> {
+        use crate::smt::vc_gen::VCGenerator;
+        use crate::smt::{SMTContext, SMTTranslator, Z3Result};
+
+        let mut smt_ctx = SMTContext::new();
+        let mut vc_gen = VCGenerator::new();
+
+        // Translate all refinement constraints to SMT
+        for (var_name, constraints) in &self.refinement_constraints {
+            for constraint in constraints {
+                // Convert clinical constraint to constraint expression
+                if let Some(constraint_expr) = self.constraint_to_expr(constraint) {
+                    match SMTTranslator::translate_constraint(&constraint_expr) {
+                        Ok(smt_formula) => {
+                            smt_ctx.add_assertion(var_name, smt_formula.clone());
+                            vc_gen.assume(smt_formula);
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "⚠ Warning: Could not translate constraint for {}: {}",
+                                var_name, e
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        // Generate verification conditions for division safety, etc.
+        let vcs = vc_gen.get_vcs();
+
+        // Check each VC
+        for vc in vcs {
+            match smt_ctx.check(vc) {
+                Z3Result::Proven => {
+                    #[cfg(feature = "smt-verification")]
+                    println!("✓ Verified: {}", vc.description);
+                }
+                Z3Result::Counterexample(model) => {
+                    #[cfg(feature = "smt-verification")]
+                    {
+                        let mut msg =
+                            format!("Cannot prove: {}\n\nCounterexample found:", vc.description);
+                        for (var, value) in &model.assignments {
+                            msg.push_str(&format!("\n  {} = {:?}", var, value));
+                        }
+                        return Err(V1TypeError::ConstraintViolation { constraint: msg });
+                    }
+
+                    #[cfg(not(feature = "smt-verification"))]
+                    {
+                        eprintln!("⚠ Warning: Cannot verify: {}", vc.description);
+                        eprintln!(
+                            "  (Compile with --features smt-verification for full verification)"
+                        );
+                    }
+                }
+                Z3Result::Unknown => {
+                    eprintln!("⚠ Warning: Could not verify: {}", vc.description);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Convert clinical Constraint to ConstraintExpr for SMT translation
+    fn constraint_to_expr(&self, constraint: &Constraint) -> Option<ConstraintExpr> {
+        use crate::ast::phase_v1::{ConstraintLiteral, LogicalOp as AstLogicalOp};
+        use crate::refinement::clinical::{
+            ComparisonOp as ClinicalCompOp, LogicalOp as ClinicalLogOp,
+        };
+
+        match constraint {
+            Constraint::Comparison { var, op, value } => {
+                // Convert clinical ComparisonOp to AST ComparisonOp
+                let ast_op = match op {
+                    ClinicalCompOp::Eq => crate::ast::phase_v1::ComparisonOp::Eq,
+                    ClinicalCompOp::Ne => crate::ast::phase_v1::ComparisonOp::Ne,
+                    ClinicalCompOp::Lt => crate::ast::phase_v1::ComparisonOp::Lt,
+                    ClinicalCompOp::Le => crate::ast::phase_v1::ComparisonOp::Le,
+                    ClinicalCompOp::Gt => crate::ast::phase_v1::ComparisonOp::Gt,
+                    ClinicalCompOp::Ge => crate::ast::phase_v1::ComparisonOp::Ge,
+                };
+
+                Some(ConstraintExpr::Comparison {
+                    var: var.clone(),
+                    op: ast_op,
+                    value: self.constraint_value_to_literal(value),
+                })
+            }
+
+            Constraint::Binary { left, op, right } => {
+                let left_expr = self.constraint_to_expr(left)?;
+                let right_expr = self.constraint_to_expr(right)?;
+
+                let ast_op = match op {
+                    ClinicalLogOp::And => AstLogicalOp::And,
+                    ClinicalLogOp::Or => AstLogicalOp::Or,
+                };
+
+                Some(ConstraintExpr::Binary {
+                    left: Box::new(left_expr),
+                    op: ast_op,
+                    right: Box::new(right_expr),
+                })
+            }
+
+            // Bool and Var constraints don't translate directly to ConstraintExpr
+            _ => None,
+        }
+    }
+
+    /// Convert ConstraintValue to ConstraintLiteral
+    fn constraint_value_to_literal(&self, value: &ConstraintValue) -> ConstraintLiteral {
+        match value {
+            ConstraintValue::Float(f) => ConstraintLiteral::Float(*f),
+            ConstraintValue::Int(i) => ConstraintLiteral::Int(*i),
+            // Bool and String don't have direct equivalents in ConstraintLiteral
+            _ => ConstraintLiteral::Float(0.0), // Fallback
+        }
+    }
 }
 
 // =============================================================================
