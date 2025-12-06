@@ -1,9 +1,9 @@
 [package]
 name = "medlangc"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 authors = ["MedLang Contributors"]
-description = "MedLang compiler for computational medicine"
+description = "MedLang compiler for computational medicine - Phase V1: Effect System, Epistemic Computing, Clinical Refinements"
 license = "MIT OR Apache-2.0"
 
 [[bin]]

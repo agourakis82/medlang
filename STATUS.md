@@ -1,18 +1,22 @@
 # MedLang Compiler - Status Report
 
-**Date**: 2025-11-23  
-**Version**: V0 Complete - Phase C Complete  
-**Status**: ✅ Production Ready + Dual Backend + End-to-End Workflow
+**Date**: 2024-12-06  
+**Version**: v0.5.0 - Phase V1 Complete  
+**Status**: ✅ Production Ready + Phase V1 Enhancements (Effect System, Epistemic Computing, Clinical Refinements)
 
 ---
 
 ## Executive Summary
 
-The MedLang V0 compiler is **production-ready with complete end-to-end workflow from source to MCMC results**. All planned features for Vertical Slice 0 (one-compartment oral PK with NLME) have been implemented for both Stan and Julia targets. Phase C (Production Integration) delivers automated MCMC sampling with diagnostics.
+The MedLang compiler has reached **Phase V1** with three major enhancements inspired by the Demetrios language, adapted for medical computing:
+
+1. **Effect System** - Tracks computational side effects (Prob, IO, GPU, Pure)
+2. **Epistemic Computing** - Knowledge<T> wrapper for confidence tracking and provenance
+3. **Clinical Refinement Types** - Medical-specific constraint predicates
 
 **Key Metrics:**
-- ✅ **103 tests passing** (100% pass rate)
-- ✅ **~5,550 lines** of production Rust code (+400 in Phase C)
+- ✅ **127 tests passing** (103 existing + 24 new, 100% pass rate)
+- ✅ **~7,230 lines** of production Rust code (+1,680 in Phase V1)
 - ✅ **Complete compilation pipeline**: Source → Tokens → AST → IR → Stan/Julia
 - ✅ **Dual backend support**: Stan (cmdstan) + Julia (DifferentialEquations.jl + Turing.jl)
 - ✅ **Full CLI tooling** with 5 commands + backend selection
@@ -20,7 +24,8 @@ The MedLang V0 compiler is **production-ready with complete end-to-end workflow 
 - ✅ **MCMC execution**: Automated cmdstan integration with diagnostics
 - ✅ **Multi-compartment support**: 2-compartment models working
 - ✅ **End-to-end workflow**: MedLang → Stan → MCMC → Diagnostics
-- ✅ **Comprehensive documentation** (Architecture + Workflow guides)
+- ✅ **Phase V1 Features**: Effect system, epistemic computing, clinical refinements
+- ✅ **Comprehensive documentation** (Architecture + Workflow + V1 guides)
 - ✅ **Golden file regression tests**
 
 ---
