@@ -1,0 +1,654 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// Week 47: Guideline Evaluation Experiment Orchestrator
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// Production-grade experiment orchestration system for MedLang that:
+// - Unifies all evaluation layers (robustness, scoring, constraints, Pareto)
+// - Supports parallel execution with configurable concurrency
+// - Provides full provenance tracking (Git state, seeds, timestamps, versions)
+// - Enables experiment comparison and delta analysis
+// - Auto-generates comprehensive reports (JSON, CSV, regulatory)
+
+module med.rl.experiment;
+
+import med.rl.env_dose_tox::{DoseToxEnvConfig};
+import med.rl.constraints::{ConstraintSet, ConstraintAnalysis, GuidelineRobustnessScore};
+import med.rl.env_robustness_pareto::{ParetoConfig, ParetoAnalysis};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PROVENANCE TYPES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Unique experiment identifier
+type ExperimentId = String;
+
+/// Git repository state for reproducibility
+type GitProvenance = {
+  commit_hash: Option<String>;
+  branch: Option<String>;
+  dirty: Bool;
+  uncommitted_files: Vector<String>;
+  remote_url: Option<String>;
+};
+
+/// Random seeds for full reproducibility
+type ExperimentSeeds = {
+  master_seed: Int;
+  scenario_seed: Int;
+  simulation_seed: Int;
+};
+
+/// Complete provenance for audit trail
+type ExperimentProvenance = {
+  experiment_id: ExperimentId;
+  name: String;
+  description: Option<String>;
+  tags: Vector<String>;
+  created_at: String;
+  started_at: Option<String>;
+  completed_at: Option<String>;
+  git: GitProvenance;
+  medlang_version: String;
+  seeds: ExperimentSeeds;
+  author: Option<String>;
+  parent_experiment_id: Option<ExperimentId>;
+  config_hash: String;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EXECUTION CONFIGURATION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// How to execute the experiment
+enum ExecutionMode {
+  /// Run guidelines one at a time
+  Sequential;
+  /// Run guidelines in parallel (auto-detect threads)
+  Parallel;
+  /// Run guidelines in parallel with specific thread count
+  ParallelWith { n_threads: Int };
+}
+
+/// How to handle errors during execution
+enum ErrorHandling {
+  /// Stop on first error
+  FailFast;
+  /// Continue and collect all errors
+  CollectErrors;
+  /// Skip failed guidelines and continue
+  SkipFailed;
+}
+
+/// Caching configuration for performance
+type CacheConfig = {
+  enabled: Bool;
+  cache_dir: String;
+  cache_robustness: Bool;
+  cache_scoring: Bool;
+  max_age_secs: Int;
+};
+
+/// Report generation configuration
+type ReportConfig = {
+  json: Bool;
+  csv: Bool;
+  regulatory: Bool;
+  publication: Bool;
+  output_dir: String;
+  auto_generate: Bool;
+};
+
+/// Scoring weights configuration
+type ScoringConfig = {
+  response_weight: Float;
+  toxicity_weight: Float;
+  rdi_weight: Float;
+  use_worst_case: Bool;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INPUT TYPES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Environment scenario for robustness testing
+type EnvScenario = {
+  name: String;
+  description: Option<String>;
+  param_overrides: Map<String, Float>;
+  weight: Float;
+};
+
+/// Guideline definition to evaluate
+type GuidelineDefinition = {
+  guideline_id: String;
+  name: Option<String>;
+  description: Option<String>;
+  policy_spec: Map<String, Any>;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MAIN CONFIGURATION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Complete experiment configuration
+type ExperimentConfig = {
+  // Provenance
+  name: String;
+  description: Option<String>;
+  tags: Vector<String>;
+  author: Option<String>;
+
+  // Inputs
+  guidelines: Vector<GuidelineDefinition>;
+  reference_guideline_id: Option<String>;
+  base_env: DoseToxEnvConfig;
+  scenarios: Vector<EnvScenario>;
+
+  // Analysis config
+  scoring_cfg: ScoringConfig;
+  constraints: Option<ConstraintSet>;
+  pareto_cfg: Option<ParetoConfig>;
+
+  // Execution config
+  execution_mode: ExecutionMode;
+  error_handling: ErrorHandling;
+  seeds: ExperimentSeeds;
+  cache: CacheConfig;
+  reports: ReportConfig;
+  strict_validation: Bool;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// RESULT TYPES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Status of individual guideline evaluation
+enum GuidelineStatus {
+  Pending;
+  Running;
+  Completed { duration_ms: Int };
+  Failed { error: String };
+  Skipped { reason: String };
+  Cached;
+}
+
+/// Per-scenario evaluation detail
+type ScenarioDetail = {
+  scenario_name: String;
+  response_rate: Float;
+  tox_rate: Float;
+  rdi: Float;
+  reward: Float;
+};
+
+/// Result for a single guideline
+type GuidelineResult = {
+  guideline_id: String;
+  status: GuidelineStatus;
+  score: Option<GuidelineRobustnessScore>;
+  scenario_details: Vector<ScenarioDetail>;
+};
+
+/// Comparison between two guidelines
+type GuidelineComparison = {
+  guideline_a_id: String;
+  guideline_b_id: String;
+  response_diff: Float;
+  tox_diff: Float;
+  rdi_diff: Float;
+  score_diff: Float;
+  response_p_value: Option<Float>;
+  tox_p_value: Option<Float>;
+  response_rel_improvement: Option<Float>;
+  tox_rel_improvement: Option<Float>;
+};
+
+/// Ranking entry for a guideline
+type RankingEntry = {
+  guideline_id: String;
+  rank_by_score: Int;
+  rank_by_response: Int;
+  rank_by_tox: Int;
+  is_pareto_optimal: Bool;
+  is_feasible: Bool;
+};
+
+/// Comparison to reference guideline
+type ReferenceComparison = {
+  reference_id: String;
+  comparisons: Vector<GuidelineComparison>;
+  rankings: Vector<RankingEntry>;
+};
+
+/// Timing breakdown
+type ExperimentTiming = {
+  total_duration_ms: Int;
+  robustness_duration_ms: Int;
+  scoring_duration_ms: Int;
+  constraints_duration_ms: Int;
+  pareto_duration_ms: Int;
+  report_duration_ms: Int;
+};
+
+/// Auto-generated summary and insights
+type ExperimentSummary = {
+  n_guidelines: Int;
+  n_scenarios: Int;
+  n_feasible: Int;
+  n_pareto_optimal: Int;
+  n_failed: Int;
+  n_cached: Int;
+  best_by_score: Option<String>;
+  best_by_response: Option<String>;
+  most_feasible: Vector<String>;
+  pareto_optimal: Vector<String>;
+  insights: Vector<String>;
+};
+
+/// Overall experiment status
+enum ExperimentStatus {
+  Pending;
+  Running;
+  Completed;
+  CompletedWithErrors;
+  Failed;
+}
+
+/// Error during experiment execution
+type ExperimentError = {
+  guideline_id: Option<String>;
+  stage: String;
+  message: String;
+  recoverable: Bool;
+};
+
+/// Complete experiment result
+type ExperimentResult = {
+  // Provenance
+  provenance: ExperimentProvenance;
+
+  // Status
+  status: ExperimentStatus;
+  timing: ExperimentTiming;
+
+  // Per-guideline results
+  guidelines: Vector<GuidelineResult>;
+
+  // Aggregated results
+  scores: Vector<GuidelineRobustnessScore>;
+  constraint_analysis: Option<ConstraintAnalysis>;
+  pareto_analysis: Option<ParetoAnalysis>;
+  pareto_feasible: Option<ParetoAnalysis>;
+
+  // Comparisons
+  reference_comparison: Option<ReferenceComparison>;
+  pairwise_comparisons: Vector<GuidelineComparison>;
+
+  // Summary
+  summary: ExperimentSummary;
+
+  // Errors
+  errors: Vector<ExperimentError>;
+  warnings: Vector<String>;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COMPARISON TYPES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Delta between guideline results across experiments
+type GuidelineDelta = {
+  guideline_id: String;
+  response_delta: Float;
+  tox_delta: Float;
+  score_delta: Float;
+};
+
+/// Comparison between two experiment runs
+type ExperimentComparison = {
+  experiment_a_id: ExperimentId;
+  experiment_b_id: ExperimentId;
+  guideline_deltas: Vector<GuidelineDelta>;
+  config_hash_match: Bool;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VALIDATION TYPES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Configuration validation error
+enum ConfigError {
+  NoGuidelines;
+  DuplicateGuidelineId { id: String };
+  ReferenceGuidelineNotFound { id: String };
+  InvalidScenario { message: String };
+  InvalidConstraint { message: String };
+}
+
+/// Configuration validation warning
+enum ConfigWarning {
+  NoScenarios;
+  EmptyConstraintSet;
+  NoPareto;
+  LargeScenarioCount { count: Int };
+}
+
+/// Validation report
+type ValidationReport = {
+  warnings: Vector<ConfigWarning>;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PROGRESS TRACKING
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Current stage of experiment execution
+enum ExperimentStage {
+  Initializing;
+  ValidatingConfig;
+  RunningRobustness;
+  ComputingScores;
+  AnalyzingConstraints;
+  ComputingPareto;
+  GeneratingReports;
+  Completed;
+  Failed;
+}
+
+/// Progress information for callbacks
+type ExperimentProgress = {
+  stage: ExperimentStage;
+  current_guideline: Option<String>;
+  guidelines_completed: Int;
+  guidelines_total: Int;
+  elapsed_secs: Float;
+  estimated_remaining_secs: Option<Float>;
+  message: String;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BUILTIN FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Run a complete guideline evaluation experiment
+builtin fn run_experiment(config: ExperimentConfig) -> ExperimentResult;
+
+/// Compare two experiment results
+builtin fn compare_experiments(
+  result_a: ExperimentResult,
+  result_b: ExperimentResult
+) -> ExperimentComparison;
+
+/// Export experiment result to JSON
+builtin fn experiment_to_json(result: ExperimentResult) -> String;
+
+/// Get experiment summary as formatted text
+builtin fn experiment_summary_text(result: ExperimentResult) -> String;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CONVENIENCE CONSTRUCTORS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Default random seeds (42, 42, 42)
+fn default_seeds() -> ExperimentSeeds {
+  {
+    master_seed = 42;
+    scenario_seed = 42;
+    simulation_seed = 42;
+  }
+}
+
+/// Default cache config (disabled)
+fn default_cache() -> CacheConfig {
+  {
+    enabled = false;
+    cache_dir = ".medlang_cache";
+    cache_robustness = true;
+    cache_scoring = true;
+    max_age_secs = 0;
+  }
+}
+
+/// Default report config
+fn default_reports() -> ReportConfig {
+  {
+    json = true;
+    csv = true;
+    regulatory = true;
+    publication = false;
+    output_dir = "experiment_outputs";
+    auto_generate = true;
+  }
+}
+
+/// Default scoring config
+fn default_scoring() -> ScoringConfig {
+  {
+    response_weight = 1.0;
+    toxicity_weight = 1.5;
+    rdi_weight = 0.5;
+    use_worst_case = false;
+  }
+}
+
+/// Create a new guideline definition
+fn guideline(id: String) -> GuidelineDefinition {
+  {
+    guideline_id = id;
+    name = None;
+    description = None;
+    policy_spec = {};
+  }
+}
+
+/// Create a new guideline with name
+fn guideline_named(id: String, name: String) -> GuidelineDefinition {
+  {
+    guideline_id = id;
+    name = Some(name);
+    description = None;
+    policy_spec = {};
+  }
+}
+
+/// Create a new scenario
+fn scenario(name: String) -> EnvScenario {
+  {
+    name = name;
+    description = None;
+    param_overrides = {};
+    weight = 1.0;
+  }
+}
+
+/// Create scenario with parameter override
+fn scenario_with_param(name: String, param: String, value: Float) -> EnvScenario {
+  {
+    name = name;
+    description = None;
+    param_overrides = { param: value };
+    weight = 1.0;
+  }
+}
+
+/// Create a minimal experiment config
+fn experiment_config(
+  name: String,
+  guidelines: Vector<GuidelineDefinition>,
+  base_env: DoseToxEnvConfig
+) -> ExperimentConfig {
+  {
+    name = name;
+    description = None;
+    tags = [];
+    author = None;
+    guidelines = guidelines;
+    reference_guideline_id = None;
+    base_env = base_env;
+    scenarios = [];
+    scoring_cfg = default_scoring();
+    constraints = None;
+    pareto_cfg = None;
+    execution_mode = ExecutionMode::Sequential;
+    error_handling = ErrorHandling::CollectErrors;
+    seeds = default_seeds();
+    cache = default_cache();
+    reports = default_reports();
+    strict_validation = true;
+  }
+}
+
+/// Add constraints to experiment config
+fn with_constraints(
+  config: ExperimentConfig,
+  constraints: ConstraintSet
+) -> ExperimentConfig {
+  { constraints = Some(constraints); ..config }
+}
+
+/// Add Pareto config to experiment
+fn with_pareto(
+  config: ExperimentConfig,
+  pareto: ParetoConfig
+) -> ExperimentConfig {
+  { pareto_cfg = Some(pareto); ..config }
+}
+
+/// Set reference guideline for comparison
+fn with_reference(
+  config: ExperimentConfig,
+  reference_id: String
+) -> ExperimentConfig {
+  { reference_guideline_id = Some(reference_id); ..config }
+}
+
+/// Add scenarios to experiment
+fn with_scenarios(
+  config: ExperimentConfig,
+  scenarios: Vector<EnvScenario>
+) -> ExperimentConfig {
+  { scenarios = scenarios; ..config }
+}
+
+/// Enable parallel execution
+fn with_parallel(config: ExperimentConfig) -> ExperimentConfig {
+  { execution_mode = ExecutionMode::Parallel; ..config }
+}
+
+/// Enable parallel execution with specific thread count
+fn with_parallel_threads(config: ExperimentConfig, n: Int) -> ExperimentConfig {
+  { execution_mode = ExecutionMode::ParallelWith { n_threads = n }; ..config }
+}
+
+/// Enable caching
+fn with_caching(config: ExperimentConfig) -> ExperimentConfig {
+  { cache = { enabled = true; ..config.cache }; ..config }
+}
+
+/// Set custom seeds for reproducibility
+fn with_seeds(
+  config: ExperimentConfig,
+  master: Int,
+  scenario: Int,
+  simulation: Int
+) -> ExperimentConfig {
+  {
+    seeds = {
+      master_seed = master;
+      scenario_seed = scenario;
+      simulation_seed = simulation;
+    };
+    ..config
+  }
+}
+
+/// Disable auto report generation
+fn without_auto_reports(config: ExperimentConfig) -> ExperimentConfig {
+  { reports = { auto_generate = false; ..config.reports }; ..config }
+}
+
+/// Set author for provenance
+fn with_author(config: ExperimentConfig, author: String) -> ExperimentConfig {
+  { author = Some(author); ..config }
+}
+
+/// Add tags for organization
+fn with_tags(config: ExperimentConfig, tags: Vector<String>) -> ExperimentConfig {
+  { tags = tags; ..config }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EXPORTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Provenance types
+export type ExperimentId;
+export type GitProvenance;
+export type ExperimentSeeds;
+export type ExperimentProvenance;
+
+// Execution config
+export enum ExecutionMode;
+export enum ErrorHandling;
+export type CacheConfig;
+export type ReportConfig;
+export type ScoringConfig;
+
+// Input types
+export type EnvScenario;
+export type GuidelineDefinition;
+export type ExperimentConfig;
+
+// Result types
+export enum GuidelineStatus;
+export type ScenarioDetail;
+export type GuidelineResult;
+export type GuidelineComparison;
+export type RankingEntry;
+export type ReferenceComparison;
+export type ExperimentTiming;
+export type ExperimentSummary;
+export enum ExperimentStatus;
+export type ExperimentError;
+export type ExperimentResult;
+
+// Comparison types
+export type GuidelineDelta;
+export type ExperimentComparison;
+
+// Validation types
+export enum ConfigError;
+export enum ConfigWarning;
+export type ValidationReport;
+
+// Progress types
+export enum ExperimentStage;
+export type ExperimentProgress;
+
+// Builtin functions
+export fn run_experiment;
+export fn compare_experiments;
+export fn experiment_to_json;
+export fn experiment_summary_text;
+
+// Convenience constructors
+export fn default_seeds;
+export fn default_cache;
+export fn default_reports;
+export fn default_scoring;
+export fn guideline;
+export fn guideline_named;
+export fn scenario;
+export fn scenario_with_param;
+export fn experiment_config;
+export fn with_constraints;
+export fn with_pareto;
+export fn with_reference;
+export fn with_scenarios;
+export fn with_parallel;
+export fn with_parallel_threads;
+export fn with_caching;
+export fn with_seeds;
+export fn without_auto_reports;
+export fn with_author;
+export fn with_tags;

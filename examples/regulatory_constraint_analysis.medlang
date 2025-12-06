@@ -1,0 +1,359 @@
+/// Week 46 Example: Regulatory Constraint Analysis for NSCLC Phase II Trial
+///
+/// This example demonstrates:
+/// 1. Custom constraint definition with hard/soft constraints
+/// 2. Composite constraints (AND/OR logic)
+/// 3. Regulatory preset usage (FDA Phase II)
+/// 4. Constraint analysis with sensitivity and relaxation
+/// 5. Report generation
+
+module examples.regulatory_constraint_analysis;
+
+import med.rl.constraints::*;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Custom constraint set for NSCLC trial
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Define custom constraints for second-line NSCLC therapy
+fn nsclc_phase2_constraints() -> ConstraintSet {
+  {
+    name = "NSCLC Phase II Custom";
+    description = Some("Custom constraints for NSCLC second-line therapy trial");
+
+    constraints = [
+      // Hard constraint: Minimum objective response rate
+      at_least("Min ORR 20%", ConstraintMetric::MeanResponse, 0.20),
+
+      // Hard constraint: Maximum Grade 3+ toxicity
+      at_most("Max Grade 3+ tox 35%", ConstraintMetric::MeanGrade3PlusRate, 0.35),
+
+      // Soft constraint: Prefer high relative dose intensity
+      soft_at_least("Target RDI 85%", ConstraintMetric::MeanRDI, 0.85, 10.0),
+
+      // Composite: Either low worst-case toxicity OR high response compensates
+      any_of([
+        at_most("Low worst-case tox", ConstraintMetric::WorstGrade3PlusRate, 0.40),
+        at_least("High response compensates", ConstraintMetric::MeanResponse, 0.40)
+      ]),
+
+      // At least 2 of 3 quality metrics must be met
+      at_least_n_of(2, [
+        at_least("Good mean score", ConstraintMetric::ScoreMean, 0.3),
+        at_most("Low toxicity variability", ConstraintMetric::ToxStd, 0.10),
+        at_least("High worst-case RDI", ConstraintMetric::WorstRDI, 0.75)
+      ])
+    ];
+
+    regulatory_context = Some("IND application for second-line NSCLC");
+    version = Some("2024-Q4");
+  }
+}
+
+/// Create a more conservative constraint set with uncertainty margins
+fn conservative_nsclc_constraints() -> ConstraintSet {
+  {
+    name = "NSCLC Phase II Conservative";
+    description = Some("Conservative constraints with uncertainty margins");
+
+    constraints = [
+      // Use lower CI bound for response (more conservative)
+      ConstraintExpr::Atom {
+        constraint = {
+          name = "Min response (CI lower bound)";
+          description = Some("Response must be significant even at lower CI bound");
+          metric = ConstraintMetric::ResponseCI95Low;
+          direction = ConstraintDirection::AtLeast;
+          threshold = 0.15;
+          threshold_high = None;
+          tolerance = None;
+          level = ConstraintLevel::Hard;
+          source = Some(RegulatorySource::FDA {
+            guidance_id = "Oncology Clinical Endpoints";
+            section = Some("Response Assessment")
+          });
+          threshold_uncertainty = None;
+        }
+      },
+
+      // Use upper CI bound for toxicity (more conservative)
+      ConstraintExpr::Atom {
+        constraint = {
+          name = "Max toxicity (CI upper bound)";
+          description = Some("Toxicity must be acceptable even at upper CI bound");
+          metric = ConstraintMetric::ToxCI95High;
+          direction = ConstraintDirection::AtMost;
+          threshold = 0.45;
+          threshold_high = None;
+          tolerance = None;
+          level = ConstraintLevel::Hard;
+          source = None;
+          threshold_uncertainty = Some(0.03); // 3% uncertainty buffer
+        }
+      }
+    ];
+
+    regulatory_context = Some("Conservative assessment for regulatory submission");
+    version = Some("2024-Q4-conservative");
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Analysis pipeline
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Run complete constraint analysis on robustness scores
+fn analyze_with_custom_constraints(
+  scores: Vector<GuidelineRobustnessScore>
+) -> ConstraintAnalysis {
+  let constraints = nsclc_phase2_constraints();
+  let pareto_cfg = default_pareto_config();
+
+  let config = constraint_config_with_pareto(constraints, pareto_cfg);
+
+  compute_constraint_analysis(scores, config)
+}
+
+/// Compare custom vs FDA preset constraints
+fn compare_constraint_sets(
+  scores: Vector<GuidelineRobustnessScore>
+) -> (ConstraintAnalysis, ConstraintAnalysis) {
+  // Custom constraints
+  let custom_analysis = analyze_with_custom_constraints(scores);
+
+  // FDA Phase II preset
+  let fda_constraints = fda_phase2_oncology();
+  let fda_config = default_constraint_config(fda_constraints);
+  let fda_analysis = compute_constraint_analysis(scores, fda_config);
+
+  (custom_analysis, fda_analysis)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Reporting
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Generate comprehensive report
+fn generate_regulatory_report(analysis: ConstraintAnalysis) {
+  print("===============================================================");
+  print("         REGULATORY CONSTRAINT ANALYSIS - NSCLC Phase II        ");
+  print("===============================================================");
+
+  print("\n[FEASIBILITY SUMMARY]");
+  print("  Total guidelines evaluated: " + int_to_string(analysis.n_total));
+  print("  Hard-feasible: " + int_to_string(analysis.n_hard_feasible) +
+        " (" + float_to_string(analysis.feasibility_rate * 100.0, 1) + "%)");
+  print("  Fully-feasible: " + int_to_string(analysis.n_fully_feasible));
+
+  // Most binding constraints
+  print("\n[MOST BINDING CONSTRAINTS]");
+  for binding in take(analysis.most_binding_constraints, 5) {
+    print("  - " + binding.constraint_name +
+          ": " + float_to_string(binding.violation_rate * 100.0, 1) +
+          "% violation rate");
+  }
+
+  // Sensitivity insights
+  match analysis.sensitivity {
+    Some(sens) => {
+      print("\n[SENSITIVITY ANALYSIS]");
+      for s in take(sens, 3) {
+        print("  - " + s.constraint_name + ":");
+        print("    Current threshold: " + float_to_string(s.current_threshold, 3));
+        print("    Feasible at 10% relaxation: " + int_to_string(s.n_feasible_at_10pct_relaxation));
+        print("    Elasticity: " + float_to_string(s.elasticity, 2));
+      }
+    };
+    None => {}
+  }
+
+  // Near-feasible guidelines (relaxation paths)
+  match analysis.relaxation_paths {
+    Some(paths) => {
+      let near_feasible = filter(paths, |p| p.total_relaxation_distance < 0.2);
+
+      if length(near_feasible) > 0 {
+        print("\n[NEAR-FEASIBLE GUIDELINES (within 20% relaxation)]");
+        for path in take(near_feasible, 5) {
+          print("  - " + path.guideline_id +
+                " (distance: " + float_to_string(path.total_relaxation_distance, 3) + ")");
+          for step in take(path.relaxation_steps, 2) {
+            print("    Relax '" + step.constraint_name +
+                  "' by " + float_to_string(step.relaxation_percent, 1) + "%");
+          }
+        }
+      }
+    };
+    None => {}
+  }
+
+  // Pareto summary
+  match analysis.pareto_feasible {
+    Some(pareto) => {
+      let front0 = filter(pareto.points, |p| p.rank == 0);
+      print("\n[PARETO-OPTIMAL (within feasible set)]");
+      print("  " + int_to_string(length(front0)) + " guidelines on Pareto front");
+    };
+    None => {}
+  }
+
+  print("\n===============================================================");
+}
+
+/// Export results to files
+fn export_results(analysis: ConstraintAnalysis, output_dir: String) {
+  // Export feasibility CSV
+  let csv = feasibility_to_csv(analysis);
+  write_file(output_dir + "/feasibility.csv", csv);
+
+  // Export full JSON
+  let json = constraint_analysis_to_json(analysis);
+  write_file(output_dir + "/constraint_analysis.json", json);
+
+  // Export regulatory summary
+  let report = to_regulatory_summary(analysis);
+  write_file(output_dir + "/regulatory_report.txt", report);
+
+  print("Results exported to " + output_dir);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Main entry point
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Main analysis function
+fn main() {
+  // In real usage, load scores from Week 44 output
+  // let scores = load_robustness_scores("week44_output.json");
+
+  // For demonstration, create mock scores
+  let scores = create_mock_scores();
+
+  print("Starting constraint analysis...\n");
+
+  // Run analysis with custom constraints
+  let analysis = analyze_with_custom_constraints(scores);
+
+  // Generate report
+  generate_regulatory_report(analysis);
+
+  // Compare with FDA preset
+  print("\n\n[COMPARISON WITH FDA PRESET]");
+  let fda_analysis = compute_constraint_analysis(
+    scores,
+    default_constraint_config(fda_phase2_oncology())
+  );
+
+  print("Custom constraints: " + int_to_string(analysis.n_hard_feasible) +
+        "/" + int_to_string(analysis.n_total) + " feasible");
+  print("FDA Phase II preset: " + int_to_string(fda_analysis.n_hard_feasible) +
+        "/" + int_to_string(fda_analysis.n_total) + " feasible");
+
+  // Export results
+  // export_results(analysis, "outputs/week46");
+}
+
+/// Create mock robustness scores for demonstration
+fn create_mock_scores() -> Vector<GuidelineRobustnessScore> {
+  [
+    // G1: Excellent - high response, low toxicity
+    {
+      guideline_id = "G1-Aggressive";
+      mean_response = 0.35;
+      mean_grade3plus_rate = 0.20;
+      mean_grade4plus_rate = Some(0.06);
+      mean_rdi = 0.90;
+      worst_response = 0.28;
+      worst_grade3plus_rate = 0.24;
+      worst_grade4plus_rate = Some(0.08);
+      worst_rdi = 0.81;
+      response_std = Some(0.035);
+      tox_std = Some(0.03);
+      score_mean = 0.15;
+      score_worst = 0.04;
+      response_ci95_low = Some(0.30);
+      response_ci95_high = Some(0.40);
+      tox_ci95_high = Some(0.26);
+    },
+
+    // G2: Mixed - moderate response, high toxicity
+    {
+      guideline_id = "G2-Standard";
+      mean_response = 0.25;
+      mean_grade3plus_rate = 0.38;
+      mean_grade4plus_rate = Some(0.11);
+      mean_rdi = 0.85;
+      worst_response = 0.20;
+      worst_grade3plus_rate = 0.46;
+      worst_grade4plus_rate = Some(0.14);
+      worst_rdi = 0.77;
+      response_std = Some(0.025);
+      tox_std = Some(0.057);
+      score_mean = -0.13;
+      score_worst = -0.26;
+      response_ci95_low = Some(0.21);
+      response_ci95_high = Some(0.29);
+      tox_ci95_high = Some(0.49);
+    },
+
+    // G3: Poor response - low response, low toxicity
+    {
+      guideline_id = "G3-Conservative";
+      mean_response = 0.15;
+      mean_grade3plus_rate = 0.15;
+      mean_grade4plus_rate = Some(0.045);
+      mean_rdi = 0.95;
+      worst_response = 0.12;
+      worst_grade3plus_rate = 0.18;
+      worst_grade4plus_rate = Some(0.06);
+      worst_rdi = 0.86;
+      response_std = Some(0.015);
+      tox_std = Some(0.023);
+      score_mean = 0.0;
+      score_worst = -0.06;
+      response_ci95_low = Some(0.13);
+      response_ci95_high = Some(0.17);
+      tox_ci95_high = Some(0.20);
+    },
+
+    // G4: High risk - very high response, very high toxicity
+    {
+      guideline_id = "G4-HighDose";
+      mean_response = 0.45;
+      mean_grade3plus_rate = 0.48;
+      mean_grade4plus_rate = Some(0.14);
+      mean_rdi = 0.70;
+      worst_response = 0.36;
+      worst_grade3plus_rate = 0.58;
+      worst_grade4plus_rate = Some(0.17);
+      worst_rdi = 0.63;
+      response_std = Some(0.045);
+      tox_std = Some(0.072);
+      score_mean = -0.03;
+      score_worst = -0.22;
+      response_ci95_low = Some(0.38);
+      response_ci95_high = Some(0.52);
+      tox_ci95_high = Some(0.62);
+    },
+
+    // G5: Balanced
+    {
+      guideline_id = "G5-Balanced";
+      mean_response = 0.30;
+      mean_grade3plus_rate = 0.28;
+      mean_grade4plus_rate = Some(0.084);
+      mean_rdi = 0.88;
+      worst_response = 0.24;
+      worst_grade3plus_rate = 0.34;
+      worst_grade4plus_rate = Some(0.10);
+      worst_rdi = 0.79;
+      response_std = Some(0.030);
+      tox_std = Some(0.042);
+      score_mean = 0.02;
+      score_worst = -0.10;
+      response_ci95_low = Some(0.26);
+      response_ci95_high = Some(0.34);
+      tox_ci95_high = Some(0.36);
+    }
+  ]
+}

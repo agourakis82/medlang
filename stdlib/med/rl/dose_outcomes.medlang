@@ -1,0 +1,89 @@
+// Week 41: Stratified outcome reporting for dose guidelines
+//
+// Provides types and built-ins to simulate a DoseGuideline as a policy
+// in DoseToxEnv and return overall + stratified outcome summaries.
+
+module med.rl.dose_outcomes;
+
+import med.rl::{RLEnvConfig};
+import med.rl.dose_guideline::{DoseGuidelineIR};
+
+// Existing (Week 40) outcome config and summary
+type DoseGuidelineOutcomeConfig = {
+  n_episodes: Int;
+  response_tumour_ratio_threshold: Float;
+  grade3_threshold: Int;
+  grade4_threshold: Int;
+};
+
+type DoseGuidelineOutcomeSummary = {
+  n_episodes: Int;
+  response_rate: Float;
+  mean_best_tumour_ratio: Float;
+  grade3plus_rate: Float;
+  grade4plus_rate: Float;
+  contract_violation_rate: Float;
+  mean_rdi: Float;
+};
+
+// Stratification types
+enum StratVarKind {
+  BaselineAnc;
+  BaselineTumourRatio;
+};
+
+type StratBin = {
+  label: String;
+  lower: Float;
+  upper: Float; // [lower, upper)
+};
+
+type StratifierConfig = {
+  var: StratVarKind;
+  bins: Vector<StratBin>;
+};
+
+type StratumOutcomeSummary = {
+  label: String;
+  n_episodes: Int;
+  response_rate: Float;
+  mean_best_tumour_ratio: Float;
+  grade3plus_rate: Float;
+  grade4plus_rate: Float;
+  contract_violation_rate: Float;
+  mean_rdi: Float;
+};
+
+type DoseGuidelineStratifiedOutcomeReport = {
+  guideline_name: String;
+  outcome_config: DoseGuidelineOutcomeConfig;
+  stratifier: StratifierConfig;
+  overall: DoseGuidelineOutcomeSummary;
+  strata: Vector<StratumOutcomeSummary>;
+};
+
+export type DoseGuidelineOutcomeConfig;
+export type DoseGuidelineOutcomeSummary;
+export enum StratVarKind;
+export type StratBin;
+export type StratifierConfig;
+export type StratumOutcomeSummary;
+export type DoseGuidelineStratifiedOutcomeReport;
+
+/// Overall (non-stratified) outcome simulation for a dose guideline.
+fn simulate_dose_guideline_outcomes(
+  env_cfg: RLEnvConfig,
+  guideline: DoseGuidelineIR,
+  cfg: DoseGuidelineOutcomeConfig
+) -> DoseGuidelineOutcomeSummary;
+
+/// Stratified outcome simulation for a dose guideline.
+fn simulate_dose_guideline_outcomes_stratified(
+  env_cfg: RLEnvConfig,
+  guideline: DoseGuidelineIR,
+  cfg: DoseGuidelineOutcomeConfig,
+  strat: StratifierConfig
+) -> DoseGuidelineStratifiedOutcomeReport;
+
+export fn simulate_dose_guideline_outcomes;
+export fn simulate_dose_guideline_outcomes_stratified;

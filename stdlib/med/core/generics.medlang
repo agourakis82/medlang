@@ -1,0 +1,387 @@
+// Week 52: MedLang Standard Library - Generics
+//
+// This module provides the standard generic functions for MedLang.
+// These functions work with any type that satisfies their bounds.
+
+// =============================================================================
+// Type Bounds (Traits)
+// =============================================================================
+
+// Numeric types (Int, Float, Dual)
+trait Num {
+    fn zero() -> Self
+    fn one() -> Self
+    fn add(a: Self, b: Self) -> Self
+    fn sub(a: Self, b: Self) -> Self
+    fn mul(a: Self, b: Self) -> Self
+    fn div(a: Self, b: Self) -> Self
+}
+
+// Ordered types (Int, Float, String)
+trait Ord {
+    fn lt(a: Self, b: Self) -> Bool
+    fn le(a: Self, b: Self) -> Bool
+    fn gt(a: Self, b: Self) -> Bool
+    fn ge(a: Self, b: Self) -> Bool
+}
+
+// Equatable types (all types)
+trait Eq {
+    fn eq(a: Self, b: Self) -> Bool
+    fn ne(a: Self, b: Self) -> Bool
+}
+
+// Differentiable types (Float, Dual, DualVec)
+trait Differentiable: Num {
+    fn dual(primal: Float, tangent: Float) -> Self
+    fn primal(x: Self) -> Float
+    fn tangent(x: Self) -> Float
+}
+
+// =============================================================================
+// Identity and Composition
+// =============================================================================
+
+// Identity function: returns its argument unchanged
+// fn identity<T>(x: T) -> T
+extern fn identity<T>(x: T) -> T
+
+// Constant function: ignores second argument
+// fn const<T, U>(x: T, y: U) -> T
+extern fn const<T, U>(x: T, y: U) -> T
+
+// Function composition: (f . g)(x) = f(g(x))
+// fn compose<T, U, V>(f: (U) -> V, g: (T) -> U) -> (T) -> V
+extern fn compose<T, U, V>(f: (U) -> V, g: (T) -> U) -> (T) -> V
+
+// Flip arguments
+// fn flip<T, U, V>(f: (T, U) -> V) -> (U, T) -> V
+extern fn flip<T, U, V>(f: (T, U) -> V) -> (U, T) -> V
+
+// =============================================================================
+// Pair/Tuple Operations
+// =============================================================================
+
+// First element of a pair
+// fn first<T, U>(pair: (T, U)) -> T
+extern fn first<T, U>(pair: (T, U)) -> T
+
+// Second element of a pair
+// fn second<T, U>(pair: (T, U)) -> U
+extern fn second<T, U>(pair: (T, U)) -> U
+
+// Create a pair
+// fn pair<T, U>(a: T, b: U) -> (T, U)
+extern fn pair<T, U>(a: T, b: U) -> (T, U)
+
+// Swap elements
+// fn swap<T, U>(pair: (T, U)) -> (U, T)
+extern fn swap<T, U>(pair: (T, U)) -> (U, T)
+
+// =============================================================================
+// List Operations - Basic
+// =============================================================================
+
+// Head of a list (first element)
+// fn head<T>(xs: [T]) -> Option<T>
+extern fn head<T>(xs: [T]) -> Option<T>
+
+// Tail of a list (all but first)
+// fn tail<T>(xs: [T]) -> [T]
+extern fn tail<T>(xs: [T]) -> [T]
+
+// Last element
+// fn last<T>(xs: [T]) -> Option<T>
+extern fn last<T>(xs: [T]) -> Option<T>
+
+// Init (all but last)
+// fn init<T>(xs: [T]) -> [T]
+extern fn init<T>(xs: [T]) -> [T]
+
+// Length of a list
+// fn length<T>(xs: [T]) -> Int
+extern fn length<T>(xs: [T]) -> Int
+
+// Check if empty
+// fn isEmpty<T>(xs: [T]) -> Bool
+extern fn isEmpty<T>(xs: [T]) -> Bool
+
+// Reverse a list
+// fn reverse<T>(xs: [T]) -> [T]
+extern fn reverse<T>(xs: [T]) -> [T]
+
+// =============================================================================
+// List Operations - Higher-Order
+// =============================================================================
+
+// Map: apply function to each element
+// fn map<T, U>(f: (T) -> U, xs: [T]) -> [U]
+extern fn map<T, U>(f: (T) -> U, xs: [T]) -> [U]
+
+// Filter: keep elements satisfying predicate
+// fn filter<T>(pred: (T) -> Bool, xs: [T]) -> [T]
+extern fn filter<T>(pred: (T) -> Bool, xs: [T]) -> [T]
+
+// Fold left: reduce from left with accumulator
+// fn foldl<T, U>(f: (U, T) -> U, init: U, xs: [T]) -> U
+extern fn foldl<T, U>(f: (U, T) -> U, init: U, xs: [T]) -> U
+
+// Fold right: reduce from right with accumulator
+// fn foldr<T, U>(f: (T, U) -> U, init: U, xs: [T]) -> U
+extern fn foldr<T, U>(f: (T, U) -> U, init: U, xs: [T]) -> U
+
+// Fold with first element as initial value
+// fn fold1<T>(f: (T, T) -> T, xs: [T]) -> Option<T>
+extern fn fold1<T>(f: (T, T) -> T, xs: [T]) -> Option<T>
+
+// Scan left: like foldl but returns intermediate values
+// fn scanl<T, U>(f: (U, T) -> U, init: U, xs: [T]) -> [U]
+extern fn scanl<T, U>(f: (U, T) -> U, init: U, xs: [T]) -> [U]
+
+// Scan right
+// fn scanr<T, U>(f: (T, U) -> U, init: U, xs: [T]) -> [U]
+extern fn scanr<T, U>(f: (T, U) -> U, init: U, xs: [T]) -> [U]
+
+// =============================================================================
+// List Operations - Combining
+// =============================================================================
+
+// Concatenate two lists
+// fn concat<T>(xs: [T], ys: [T]) -> [T]
+extern fn concat<T>(xs: [T], ys: [T]) -> [T]
+
+// Flatten nested lists
+// fn flatten<T>(xss: [[T]]) -> [T]
+extern fn flatten<T>(xss: [[T]]) -> [T]
+
+// FlatMap: map then flatten
+// fn flatMap<T, U>(f: (T) -> [U], xs: [T]) -> [U]
+extern fn flatMap<T, U>(f: (T) -> [U], xs: [T]) -> [U]
+
+// Zip two lists into pairs
+// fn zip<T, U>(xs: [T], ys: [U]) -> [(T, U)]
+extern fn zip<T, U>(xs: [T], ys: [U]) -> [(T, U)]
+
+// Zip with a combining function
+// fn zipWith<T, U, V>(f: (T, U) -> V, xs: [T], ys: [U]) -> [V]
+extern fn zipWith<T, U, V>(f: (T, U) -> V, xs: [T], ys: [U]) -> [V]
+
+// Unzip pairs into two lists
+// fn unzip<T, U>(pairs: [(T, U)]) -> ([T], [U])
+extern fn unzip<T, U>(pairs: [(T, U)]) -> ([T], [U])
+
+// =============================================================================
+// List Operations - Searching
+// =============================================================================
+
+// Find first element matching predicate
+// fn find<T>(pred: (T) -> Bool, xs: [T]) -> Option<T>
+extern fn find<T>(pred: (T) -> Bool, xs: [T]) -> Option<T>
+
+// Find index of first match
+// fn findIndex<T>(pred: (T) -> Bool, xs: [T]) -> Option<Int>
+extern fn findIndex<T>(pred: (T) -> Bool, xs: [T]) -> Option<Int>
+
+// Check if any element satisfies predicate
+// fn any<T>(pred: (T) -> Bool, xs: [T]) -> Bool
+extern fn any<T>(pred: (T) -> Bool, xs: [T]) -> Bool
+
+// Check if all elements satisfy predicate
+// fn all<T>(pred: (T) -> Bool, xs: [T]) -> Bool
+extern fn all<T>(pred: (T) -> Bool, xs: [T]) -> Bool
+
+// Check if element is in list (requires Eq)
+// fn elem<T: Eq>(x: T, xs: [T]) -> Bool
+extern fn elem<T: Eq>(x: T, xs: [T]) -> Bool
+
+// =============================================================================
+// List Operations - Slicing
+// =============================================================================
+
+// Take first n elements
+// fn take<T>(n: Int, xs: [T]) -> [T]
+extern fn take<T>(n: Int, xs: [T]) -> [T]
+
+// Drop first n elements
+// fn drop<T>(n: Int, xs: [T]) -> [T]
+extern fn drop<T>(n: Int, xs: [T]) -> [T]
+
+// Take while predicate holds
+// fn takeWhile<T>(pred: (T) -> Bool, xs: [T]) -> [T]
+extern fn takeWhile<T>(pred: (T) -> Bool, xs: [T]) -> [T]
+
+// Drop while predicate holds
+// fn dropWhile<T>(pred: (T) -> Bool, xs: [T]) -> [T]
+extern fn dropWhile<T>(pred: (T) -> Bool, xs: [T]) -> [T]
+
+// Split at index
+// fn splitAt<T>(n: Int, xs: [T]) -> ([T], [T])
+extern fn splitAt<T>(n: Int, xs: [T]) -> ([T], [T])
+
+// =============================================================================
+// Option Operations
+// =============================================================================
+
+// Create Some value
+// fn some<T>(x: T) -> Option<T>
+extern fn some<T>(x: T) -> Option<T>
+
+// Create None value
+// fn none<T>() -> Option<T>
+extern fn none<T>() -> Option<T>
+
+// Check if Some
+// fn isSome<T>(opt: Option<T>) -> Bool
+extern fn isSome<T>(opt: Option<T>) -> Bool
+
+// Check if None
+// fn isNone<T>(opt: Option<T>) -> Bool
+extern fn isNone<T>(opt: Option<T>) -> Bool
+
+// Get value or default
+// fn getOrElse<T>(opt: Option<T>, default: T) -> T
+extern fn getOrElse<T>(opt: Option<T>, default: T) -> T
+
+// Map over Option
+// fn mapOption<T, U>(f: (T) -> U, opt: Option<T>) -> Option<U>
+extern fn mapOption<T, U>(f: (T) -> U, opt: Option<T>) -> Option<U>
+
+// FlatMap over Option
+// fn flatMapOption<T, U>(f: (T) -> Option<U>, opt: Option<T>) -> Option<U>
+extern fn flatMapOption<T, U>(f: (T) -> Option<U>, opt: Option<T>) -> Option<U>
+
+// =============================================================================
+// Result Operations
+// =============================================================================
+
+// Create Ok value
+// fn ok<T, E>(x: T) -> Result<T, E>
+extern fn ok<T, E>(x: T) -> Result<T, E>
+
+// Create Err value
+// fn err<T, E>(e: E) -> Result<T, E>
+extern fn err<T, E>(e: E) -> Result<T, E>
+
+// Check if Ok
+// fn isOk<T, E>(res: Result<T, E>) -> Bool
+extern fn isOk<T, E>(res: Result<T, E>) -> Bool
+
+// Check if Err
+// fn isErr<T, E>(res: Result<T, E>) -> Bool
+extern fn isErr<T, E>(res: Result<T, E>) -> Bool
+
+// Map over Ok value
+// fn mapResult<T, U, E>(f: (T) -> U, res: Result<T, E>) -> Result<U, E>
+extern fn mapResult<T, U, E>(f: (T) -> U, res: Result<T, E>) -> Result<U, E>
+
+// Map over Err value
+// fn mapErr<T, E, F>(f: (E) -> F, res: Result<T, E>) -> Result<T, F>
+extern fn mapErr<T, E, F>(f: (E) -> F, res: Result<T, E>) -> Result<T, F>
+
+// =============================================================================
+// Numeric Operations (Generic)
+// =============================================================================
+
+// Sum of numeric list
+// fn sum<T: Num>(xs: [T]) -> T
+extern fn sum<T: Num>(xs: [T]) -> T
+
+// Product of numeric list
+// fn product<T: Num>(xs: [T]) -> T
+extern fn product<T: Num>(xs: [T]) -> T
+
+// Minimum of ordered list
+// fn minimum<T: Ord>(xs: [T]) -> Option<T>
+extern fn minimum<T: Ord>(xs: [T]) -> Option<T>
+
+// Maximum of ordered list
+// fn maximum<T: Ord>(xs: [T]) -> Option<T>
+extern fn maximum<T: Ord>(xs: [T]) -> Option<T>
+
+// =============================================================================
+// Sorting (requires Ord)
+// =============================================================================
+
+// Sort list in ascending order
+// fn sort<T: Ord>(xs: [T]) -> [T]
+extern fn sort<T: Ord>(xs: [T]) -> [T]
+
+// Sort by key function
+// fn sortBy<T, K: Ord>(key: (T) -> K, xs: [T]) -> [T]
+extern fn sortBy<T, K: Ord>(key: (T) -> K, xs: [T]) -> [T]
+
+// Sort descending
+// fn sortDesc<T: Ord>(xs: [T]) -> [T]
+extern fn sortDesc<T: Ord>(xs: [T]) -> [T]
+
+// =============================================================================
+// Grouping
+// =============================================================================
+
+// Group consecutive equal elements
+// fn group<T: Eq>(xs: [T]) -> [[T]]
+extern fn group<T: Eq>(xs: [T]) -> [[T]]
+
+// Group by key function
+// fn groupBy<T, K: Eq>(key: (T) -> K, xs: [T]) -> [(K, [T])]
+extern fn groupBy<T, K: Eq>(key: (T) -> K, xs: [T]) -> [(K, [T])]
+
+// Partition by predicate
+// fn partition<T>(pred: (T) -> Bool, xs: [T]) -> ([T], [T])
+extern fn partition<T>(pred: (T) -> Bool, xs: [T]) -> ([T], [T])
+
+// =============================================================================
+// Unique/Distinct
+// =============================================================================
+
+// Remove consecutive duplicates
+// fn nub<T: Eq>(xs: [T]) -> [T]
+extern fn nub<T: Eq>(xs: [T]) -> [T]
+
+// Remove all duplicates (keeps first occurrence)
+// fn distinct<T: Eq>(xs: [T]) -> [T]
+extern fn distinct<T: Eq>(xs: [T]) -> [T]
+
+// =============================================================================
+// Range Generation
+// =============================================================================
+
+// Generate range [start..end)
+// fn range(start: Int, end: Int) -> [Int]
+extern fn range(start: Int, end: Int) -> [Int]
+
+// Generate range with step
+// fn rangeStep(start: Int, end: Int, step: Int) -> [Int]
+extern fn rangeStep(start: Int, end: Int, step: Int) -> [Int]
+
+// Replicate value n times
+// fn replicate<T>(n: Int, x: T) -> [T]
+extern fn replicate<T>(n: Int, x: T) -> [T]
+
+// Iterate function n times
+// fn iterate<T>(n: Int, f: (T) -> T, x: T) -> [T]
+extern fn iterate<T>(n: Int, f: (T) -> T, x: T) -> [T]
+
+// =============================================================================
+// Applicative/Monadic Operations
+// =============================================================================
+
+// Apply wrapped function to wrapped value
+// fn ap<T, U>(fs: [((T) -> U)], xs: [T]) -> [U]
+extern fn ap<T, U>(fs: [((T) -> U)], xs: [T]) -> [U]
+
+// Sequence list of Options
+// fn sequenceOption<T>(opts: [Option<T>]) -> Option<[T]>
+extern fn sequenceOption<T>(opts: [Option<T>]) -> Option<[T]>
+
+// Sequence list of Results
+// fn sequenceResult<T, E>(results: [Result<T, E>]) -> Result<[T], E>
+extern fn sequenceResult<T, E>(results: [Result<T, E>]) -> Result<[T], E>
+
+// Traverse with Option-returning function
+// fn traverseOption<T, U>(f: (T) -> Option<U>, xs: [T]) -> Option<[U]>
+extern fn traverseOption<T, U>(f: (T) -> Option<U>, xs: [T]) -> Option<[U]>
+
+// Traverse with Result-returning function
+// fn traverseResult<T, U, E>(f: (T) -> Result<U, E>, xs: [T]) -> Result<[U], E>
+extern fn traverseResult<T, U, E>(f: (T) -> Result<U, E>, xs: [T]) -> Result<[U], E>

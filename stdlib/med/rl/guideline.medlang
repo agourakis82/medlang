@@ -1,0 +1,122 @@
+// Week 37: RL → Guideline Translation
+//
+// Provides bridging API to convert distilled RL policies into clinical
+// guideline artifacts that can be exported to CQL or other formats.
+
+module med.rl.guideline;
+
+import med.rl::{RLEnvConfig};
+import med.rl.explain::{DistilledPolicy};
+
+/// Metadata for a dose adjustment guideline
+///
+/// This metadata describes the clinical context and scope of the
+/// guideline derived from an RL policy.
+type DoseGuidelineMeta = {
+  /// Unique identifier for the guideline (e.g., "NSCLC-Phase2-RL-DoseGuideline")
+  id: String;
+
+  /// Version string (e.g., "1.0.0", "0.1.0-beta")
+  version: String;
+
+  /// Human-readable title
+  title: String;
+
+  /// Detailed description of the guideline's purpose and derivation
+  description: String;
+
+  /// Target population (e.g., "Adult NSCLC, 2nd line, ECOG 0-1")
+  population: String;
+};
+
+/// Opaque handle to a clinical guideline artifact
+///
+/// This represents a complete guideline with metadata, rules, and conditions.
+/// The guideline can be:
+/// - Exported to JSON for inspection
+/// - Converted to CQL for FHIR integration
+/// - Compared to existing clinical guidelines
+/// - Validated against domain knowledge
+type GuidelineArtifact = opaque;
+
+export type DoseGuidelineMeta;
+export type GuidelineArtifact;
+
+/// Convert a distilled RL policy into a clinical guideline artifact.
+///
+/// This function extracts the decision rules from a distilled policy tree
+/// and converts them into explicit clinical guideline rules with:
+/// - Conditions based on clinical features (ANC, tumor size, cycle, etc.)
+/// - Dose actions (set absolute dose, hold dose)
+/// - Human-readable descriptions
+///
+/// The resulting guideline can be exported to:
+/// - JSON for inspection and validation
+/// - CQL for integration with FHIR systems
+/// - Human-readable text for clinical review
+///
+/// ## Example Usage
+///
+/// ```medlang
+/// // 1. Train RL policy
+/// let result = train_policy_rl(env_cfg, train_cfg);
+/// let policy = result.1;
+///
+/// // 2. Distill to decision tree
+/// let distill_result = distill_policy_tree(env_cfg, policy, distill_cfg);
+/// let tree = distill_result.policy;
+///
+/// // 3. Convert to guideline
+/// let meta: DoseGuidelineMeta = {
+///   id = "NSCLC-Phase2-RL";
+///   version = "1.0.0";
+///   title = "NSCLC Phase 2 RL-derived dose guideline";
+///   description = "Dose adjustment rules from RL policy";
+///   population = "Adult NSCLC, 2L, ECOG 0-1";
+/// };
+///
+/// let guideline: GuidelineArtifact = distilled_policy_to_guideline(
+///   env_cfg,
+///   tree,
+///   meta
+/// );
+/// ```
+///
+/// ## Guideline Structure
+///
+/// The generated guideline contains rules of the form:
+/// ```
+/// IF ANC <= 0.5 AND tumor_ratio > 0.7 THEN hold_dose
+/// IF ANC > 0.5 AND ANC <= 0.8 THEN set_dose(100 mg)
+/// IF ANC > 0.8 THEN set_dose(200 mg)
+/// ```
+///
+/// Each rule includes:
+/// - **Condition**: Conjunction of clinical feature constraints
+/// - **Action**: Dose recommendation (absolute dose in mg or hold)
+/// - **Description**: Human-readable explanation
+/// - **Priority**: For rule ordering when multiple rules match
+///
+/// ## Clinical Features
+///
+/// For DoseToxEnv, the following features are extracted:
+/// - **ANC**: Absolute Neutrophil Count (normalized)
+/// - **tumor_ratio**: Tumor size relative to baseline
+/// - **cycle**: Current treatment cycle (1-indexed)
+/// - **prev_dose**: Previous cycle dose (mg)
+///
+/// ## Notes
+///
+/// - The guideline faithfully represents the distilled tree's logic
+/// - Rule priorities are set to ensure deterministic evaluation
+/// - Dose levels come from RLEnvConfig.dose_levels
+/// - Action 0 (dose 0) is mapped to "hold dose"
+/// - Other actions map to "set dose to X mg"
+///
+fn distilled_policy_to_guideline(
+  env_cfg: RLEnvConfig;
+  distilled: DistilledPolicy;
+  meta: DoseGuidelineMeta;
+) -> GuidelineArtifact;
+
+export fn distilled_policy_to_guideline;

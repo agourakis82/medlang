@@ -1,0 +1,706 @@
+// Week 48: Baseline Comparison & Publication-Ready Export (v2.0)
+//
+// MedLang stdlib module for comprehensive reporting with:
+// - Statistical comparisons (CIs, p-values, effect sizes)
+// - Clinical metrics (NNT, NNH, risk ratios)
+// - Publication-ready exports (CSV, JSON, LaTeX, Markdown)
+// - Forest plot data structures
+
+module med.rl.reporting
+
+// ============================================================================
+// PART 1: CONFIDENCE INTERVALS
+// ============================================================================
+
+/// Confidence interval with point estimate and bounds
+type ConfidenceInterval {
+    estimate: Float       // Point estimate
+    lower: Float          // Lower bound
+    upper: Float          // Upper bound
+    level: Float          // Confidence level (e.g., 0.95)
+}
+
+/// Create a 95% confidence interval
+fn ci95(estimate: Float, lower: Float, upper: Float) -> ConfidenceInterval {
+    ConfidenceInterval {
+        estimate: estimate,
+        lower: lower,
+        upper: upper,
+        level: 0.95
+    }
+}
+
+/// Create a confidence interval with custom level
+fn ci_custom(estimate: Float, lower: Float, upper: Float, level: Float) -> ConfidenceInterval {
+    ConfidenceInterval {
+        estimate: estimate,
+        lower: lower,
+        upper: upper,
+        level: level
+    }
+}
+
+/// Check if confidence interval contains zero (for difference tests)
+fn ci_contains_zero(ci: ConfidenceInterval) -> Bool {
+    ci.lower <= 0.0 and ci.upper >= 0.0
+}
+
+/// Calculate width of confidence interval
+fn ci_width(ci: ConfidenceInterval) -> Float {
+    ci.upper - ci.lower
+}
+
+// ============================================================================
+// PART 2: EFFECT SIZE TYPES
+// ============================================================================
+
+/// Effect size type enumeration
+enum EffectSizeType {
+    CohenD          // Standardized mean difference
+    HedgesG         // Bias-corrected Cohen's d
+    GlassDelta      // Glass's delta
+    OddsRatio       // Odds ratio
+    RiskDifference  // Absolute risk difference
+    NNT             // Number needed to treat
+}
+
+/// Effect magnitude interpretation (Cohen's conventions)
+enum EffectMagnitude {
+    Negligible   // |d| < 0.2
+    Small        // 0.2 <= |d| < 0.5
+    Medium       // 0.5 <= |d| < 0.8
+    Large        // 0.8 <= |d| < 1.2
+    VeryLarge    // |d| >= 1.2
+}
+
+/// Complete effect size with interpretation
+type EffectSize {
+    effect_type: EffectSizeType
+    value: Float
+    ci: Option<ConfidenceInterval>
+    interpretation: EffectMagnitude
+}
+
+/// Interpret Cohen's d magnitude
+fn interpret_cohens_d(d: Float) -> EffectMagnitude {
+    let abs_d = abs(d)
+    if abs_d < 0.2 {
+        EffectMagnitude::Negligible
+    } else if abs_d < 0.5 {
+        EffectMagnitude::Small
+    } else if abs_d < 0.8 {
+        EffectMagnitude::Medium
+    } else if abs_d < 1.2 {
+        EffectMagnitude::Large
+    } else {
+        EffectMagnitude::VeryLarge
+    }
+}
+
+// ============================================================================
+// PART 3: RISK RATIOS AND NNT
+// ============================================================================
+
+/// Risk ratio with confidence interval
+type RiskRatio {
+    ratio: Float
+    ci: ConfidenceInterval
+    p_value: Float
+}
+
+/// NNT type (benefit vs harm)
+enum NNTType {
+    NNT       // Number Needed to Treat (benefit)
+    NNH       // Number Needed to Harm
+    Infinite  // No difference between groups
+}
+
+/// Number Needed to Treat result
+type NNTResult {
+    nnt: Float
+    ci: ConfidenceInterval
+    metric_type: NNTType
+    interpretation: String
+}
+
+/// Calculate NNT from two proportions
+fn calculate_nnt(p_treatment: Float, p_control: Float) -> NNTResult {
+    let arr = p_treatment - p_control  // Absolute Risk Reduction
+
+    if abs(arr) < 0.0001 {
+        NNTResult {
+            nnt: infinity,
+            ci: ci95(infinity, neg_infinity, infinity),
+            metric_type: NNTType::Infinite,
+            interpretation: "No difference between treatments"
+        }
+    } else {
+        let nnt = 1.0 / arr
+        let metric_type = if nnt > 0.0 { NNTType::NNT } else { NNTType::NNH }
+        let interpretation = format_nnt_interpretation(nnt, metric_type)
+
+        NNTResult {
+            nnt: nnt,
+            ci: ci95(nnt, nnt * 0.5, nnt * 2.0),  // Rough approximation
+            metric_type: metric_type,
+            interpretation: interpretation
+        }
+    }
+}
+
+// ============================================================================
+// PART 4: CLINICAL INTERPRETATION
+// ============================================================================
+
+/// Clinical interpretation categories
+enum ClinicalInterpretation {
+    Superior      // Treatment is clinically superior
+    NonInferior   // Treatment is non-inferior
+    Equivalent    // Treatments are clinically equivalent
+    Inferior      // Treatment is clinically inferior
+    Inconclusive  // Insufficient data
+}
+
+/// Direction of effect
+enum EffectDirection {
+    Favorable    // Treatment better
+    Neutral      // No meaningful difference
+    Unfavorable  // Treatment worse
+}
+
+/// Recommended action based on comparison
+enum RecommendedAction {
+    PreferTreatment     // Prefer treatment over control
+    PreferControl       // Prefer control over treatment
+    EitherAcceptable    // Either option is acceptable
+    RequiresMoreData    // Need more data for decision
+    IndividualizeChoice // Consider patient-specific factors
+}
+
+/// Confidence in recommendation
+enum RecommendationConfidence {
+    High
+    Moderate
+    Low
+    VeryLow
+}
+
+/// Complete recommendation
+type Recommendation {
+    action: RecommendedAction
+    confidence: RecommendationConfidence
+    rationale: List<String>
+    caveats: List<String>
+}
+
+// ============================================================================
+// PART 5: METRIC COMPARISON
+// ============================================================================
+
+/// Comparison for a single metric
+type MetricComparison {
+    metric_name: String
+    treatment_value: Float
+    control_value: Float
+    absolute_diff: Float
+    relative_diff: Option<Float>
+    risk_ratio: Option<RiskRatio>
+    diff_ci: ConfidenceInterval
+    p_value: Float
+    effect_size: EffectSize
+    significant: Bool
+    direction: EffectDirection
+}
+
+/// Complete statistical comparison between two guidelines
+type StatisticalComparison {
+    treatment_id: String
+    control_id: String
+    response: MetricComparison
+    toxicity_grade3: MetricComparison
+    toxicity_grade4: Option<MetricComparison>
+    rdi: MetricComparison
+    composite_score: MetricComparison
+    interpretation: ClinicalInterpretation
+    recommendation: Recommendation
+}
+
+// ============================================================================
+// PART 6: CLINICAL METRICS
+// ============================================================================
+
+/// Therapeutic index comparison
+type TherapeuticIndexComparison {
+    treatment_ti: Float
+    control_ti: Float
+    ti_ratio: Float
+    interpretation: String
+}
+
+/// Complete clinical metrics for a comparison
+type ClinicalMetrics {
+    nnt_response: Option<NNTResult>
+    nnh_toxicity: Option<NNTResult>
+    arr_toxicity: Option<Float>
+    rrr_toxicity: Option<Float>
+    benefit_harm_ratio: Option<Float>
+    therapeutic_index: TherapeuticIndexComparison
+}
+
+/// Calculate therapeutic index (response / toxicity)
+fn therapeutic_index(response: Float, toxicity: Float) -> Float {
+    if toxicity <= 0.0 {
+        infinity
+    } else {
+        response / toxicity
+    }
+}
+
+// ============================================================================
+// PART 7: FOREST PLOT DATA
+// ============================================================================
+
+/// Metrics available for forest plots
+enum ForestPlotMetric {
+    ResponseDifference
+    ResponseRiskRatio
+    ToxicityDifference
+    ToxicityRiskRatio
+    CompositeScore
+}
+
+/// Single entry in forest plot
+type ForestPlotEntry {
+    label: String
+    estimate: Float
+    ci_lower: Float
+    ci_upper: Float
+    weight: Option<Float>
+    favors_treatment: Bool
+    group: Option<String>
+}
+
+/// Summary row for forest plot
+type ForestPlotSummary {
+    label: String
+    estimate: Float
+    ci_lower: Float
+    ci_upper: Float
+    i_squared: Option<Float>
+}
+
+/// Complete forest plot data structure
+type ForestPlotData {
+    title: String
+    metric: String
+    entries: List<ForestPlotEntry>
+    summary: Option<ForestPlotSummary>
+    reference_value: Float
+    is_ratio_scale: Bool
+    x_label: String
+}
+
+/// Create a forest plot entry
+fn forest_entry(
+    label: String,
+    estimate: Float,
+    ci_lower: Float,
+    ci_upper: Float,
+    favors_treatment: Bool
+) -> ForestPlotEntry {
+    ForestPlotEntry {
+        label: label,
+        estimate: estimate,
+        ci_lower: ci_lower,
+        ci_upper: ci_upper,
+        weight: None,
+        favors_treatment: favors_treatment,
+        group: None
+    }
+}
+
+// ============================================================================
+// PART 8: PUBLICATION REPORT
+// ============================================================================
+
+/// Table type enumeration
+enum TableType {
+    Summary
+    Comparison
+    ClinicalMetrics
+    Rankings
+    EffectSizes
+}
+
+/// Report table
+type ReportTable {
+    id: String
+    title: String
+    table_type: TableType
+    headers: List<String>
+    rows: List<List<String>>
+    footnotes: List<String>
+}
+
+/// Report metadata
+type ReportMetadata {
+    title: String
+    generated_at: String
+    experiment_id: Option<String>
+    n_guidelines: Int
+    n_scenarios: Int
+    alpha: Float
+    version: String
+}
+
+/// Guideline-specific recommendation
+type GuidelineRecommendation {
+    guideline_id: String
+    rank: Int
+    action: RecommendedAction
+    confidence: RecommendationConfidence
+    strengths: List<String>
+    weaknesses: List<String>
+    evidence: List<String>
+}
+
+/// Executive summary
+type ExecutiveSummary {
+    key_findings: List<String>
+    primary_recommendation: Option<GuidelineRecommendation>
+    significant_comparisons: Int
+    total_comparisons: Int
+}
+
+/// Complete publication-ready report
+type PublicationReport {
+    metadata: ReportMetadata
+    executive_summary: ExecutiveSummary
+    comparisons: List<StatisticalComparison>
+    clinical_metrics: List<(String, String, ClinicalMetrics)>
+    tables: List<ReportTable>
+    forest_plots: List<ForestPlotData>
+    recommendations: List<GuidelineRecommendation>
+    statistical_notes: List<String>
+}
+
+// ============================================================================
+// PART 9: EXPORT FORMATS
+// ============================================================================
+
+/// Export format options
+enum ExportFormat {
+    JSON
+    CSV
+    LaTeX
+    Markdown
+}
+
+/// Export configuration
+type ExportConfig {
+    include_cis: Bool
+    include_p_values: Bool
+    include_effect_sizes: Bool
+    decimal_places_pct: Int
+    decimal_places_p: Int
+    decimal_places_effect: Int
+    bold_significant: Bool
+    caption_prefix: String
+}
+
+/// Default export configuration
+fn default_export_config() -> ExportConfig {
+    ExportConfig {
+        include_cis: true,
+        include_p_values: true,
+        include_effect_sizes: true,
+        decimal_places_pct: 1,
+        decimal_places_p: 4,
+        decimal_places_effect: 2,
+        bold_significant: true,
+        caption_prefix: "Table"
+    }
+}
+
+// ============================================================================
+// PART 10: COMPARISON CONFIGURATION
+// ============================================================================
+
+/// Configuration for comparison analysis
+type ComparisonConfig {
+    alpha: Float
+    non_inferiority_margin_response: Float
+    non_inferiority_margin_toxicity: Float
+    assumed_n_per_arm: Int
+    include_clinical_metrics: Bool
+    include_effect_sizes: Bool
+}
+
+/// Default comparison configuration
+fn default_comparison_config() -> ComparisonConfig {
+    ComparisonConfig {
+        alpha: 0.05,
+        non_inferiority_margin_response: 0.10,
+        non_inferiority_margin_toxicity: 0.05,
+        assumed_n_per_arm: 100,
+        include_clinical_metrics: true,
+        include_effect_sizes: true
+    }
+}
+
+/// Create comparison config with custom alpha
+fn comparison_config_alpha(alpha: Float) -> ComparisonConfig {
+    ComparisonConfig {
+        alpha: alpha,
+        non_inferiority_margin_response: 0.10,
+        non_inferiority_margin_toxicity: 0.05,
+        assumed_n_per_arm: 100,
+        include_clinical_metrics: true,
+        include_effect_sizes: true
+    }
+}
+
+/// Create comparison config with custom sample size assumption
+fn comparison_config_n(n_per_arm: Int) -> ComparisonConfig {
+    ComparisonConfig {
+        alpha: 0.05,
+        non_inferiority_margin_response: 0.10,
+        non_inferiority_margin_toxicity: 0.05,
+        assumed_n_per_arm: n_per_arm,
+        include_clinical_metrics: true,
+        include_effect_sizes: true
+    }
+}
+
+// ============================================================================
+// PART 11: REPORT GENERATOR CONFIGURATION
+// ============================================================================
+
+/// Configuration for report generation
+type ReportGeneratorConfig {
+    comparison: ComparisonConfig
+    export: ExportConfig
+    include_forest_plots: Bool
+    include_clinical_metrics: Bool
+    reference_guideline: Option<String>
+    max_pairwise_comparisons: Int
+}
+
+/// Default report generator configuration
+fn default_report_config() -> ReportGeneratorConfig {
+    ReportGeneratorConfig {
+        comparison: default_comparison_config(),
+        export: default_export_config(),
+        include_forest_plots: true,
+        include_clinical_metrics: true,
+        reference_guideline: None,
+        max_pairwise_comparisons: 20
+    }
+}
+
+/// Create report config with specific reference guideline
+fn report_config_with_reference(reference_id: String) -> ReportGeneratorConfig {
+    ReportGeneratorConfig {
+        comparison: default_comparison_config(),
+        export: default_export_config(),
+        include_forest_plots: true,
+        include_clinical_metrics: true,
+        reference_guideline: Some(reference_id),
+        max_pairwise_comparisons: 20
+    }
+}
+
+// ============================================================================
+// PART 12: CONVENIENCE CONSTRUCTORS
+// ============================================================================
+
+/// Create a basic metric comparison result
+fn metric_comparison(
+    name: String,
+    treatment_val: Float,
+    control_val: Float,
+    p_value: Float,
+    significant: Bool
+) -> MetricComparison {
+    let diff = treatment_val - control_val
+    let rel_diff = if abs(control_val) > 0.0001 { Some(diff / control_val) } else { None }
+
+    MetricComparison {
+        metric_name: name,
+        treatment_value: treatment_val,
+        control_value: control_val,
+        absolute_diff: diff,
+        relative_diff: rel_diff,
+        risk_ratio: None,
+        diff_ci: ci95(diff, diff - 0.1, diff + 0.1),
+        p_value: p_value,
+        effect_size: EffectSize {
+            effect_type: EffectSizeType::CohenD,
+            value: 0.0,
+            ci: None,
+            interpretation: EffectMagnitude::Negligible
+        },
+        significant: significant,
+        direction: if diff > 0.0 { EffectDirection::Favorable } else { EffectDirection::Unfavorable }
+    }
+}
+
+/// Create a simple recommendation
+fn simple_recommendation(action: RecommendedAction, confidence: RecommendationConfidence) -> Recommendation {
+    Recommendation {
+        action: action,
+        confidence: confidence,
+        rationale: [],
+        caveats: []
+    }
+}
+
+/// Create a guideline recommendation with rank
+fn guideline_recommendation(
+    guideline_id: String,
+    rank: Int,
+    action: RecommendedAction
+) -> GuidelineRecommendation {
+    GuidelineRecommendation {
+        guideline_id: guideline_id,
+        rank: rank,
+        action: action,
+        confidence: RecommendationConfidence::Moderate,
+        strengths: [],
+        weaknesses: [],
+        evidence: []
+    }
+}
+
+// ============================================================================
+// PART 13: UTILITY FUNCTIONS
+// ============================================================================
+
+/// Format p-value for display
+fn format_p_value(p: Float) -> String {
+    if p < 0.001 {
+        "<0.001"
+    } else if p < 0.01 {
+        format("{:.3}", p)
+    } else {
+        format("{:.4}", p)
+    }
+}
+
+/// Format percentage for display
+fn format_pct(value: Float, decimals: Int) -> String {
+    format("{:.{decimals}$}%", value * 100.0)
+}
+
+/// Format confidence interval for display
+fn format_ci(ci: ConfidenceInterval, decimals: Int) -> String {
+    format("{:.{decimals}$} [{:.{decimals}$}, {:.{decimals}$}]",
+           ci.estimate, ci.lower, ci.upper)
+}
+
+/// Check if result is statistically significant at given alpha
+fn is_significant(p_value: Float, alpha: Float) -> Bool {
+    p_value < alpha
+}
+
+/// Check if result is clinically meaningful (above MCID)
+fn is_clinically_meaningful(diff: Float, mcid: Float) -> Bool {
+    abs(diff) >= mcid
+}
+
+// ============================================================================
+// PART 14: PRESETS
+// ============================================================================
+
+/// Preset configurations for common use cases
+module presets {
+    /// Oncology trial configuration (stricter toxicity margins)
+    fn oncology_config() -> ComparisonConfig {
+        ComparisonConfig {
+            alpha: 0.05,
+            non_inferiority_margin_response: 0.10,
+            non_inferiority_margin_toxicity: 0.03,  // Stricter for oncology
+            assumed_n_per_arm: 150,
+            include_clinical_metrics: true,
+            include_effect_sizes: true
+        }
+    }
+
+    /// Exploratory analysis configuration (larger alpha)
+    fn exploratory_config() -> ComparisonConfig {
+        ComparisonConfig {
+            alpha: 0.10,
+            non_inferiority_margin_response: 0.15,
+            non_inferiority_margin_toxicity: 0.08,
+            assumed_n_per_arm: 50,
+            include_clinical_metrics: true,
+            include_effect_sizes: true
+        }
+    }
+
+    /// Regulatory submission configuration (conservative)
+    fn regulatory_config() -> ComparisonConfig {
+        ComparisonConfig {
+            alpha: 0.025,  // One-sided or adjusted for multiple comparisons
+            non_inferiority_margin_response: 0.08,
+            non_inferiority_margin_toxicity: 0.03,
+            assumed_n_per_arm: 200,
+            include_clinical_metrics: true,
+            include_effect_sizes: true
+        }
+    }
+
+    /// Publication-ready export config
+    fn publication_export_config() -> ExportConfig {
+        ExportConfig {
+            include_cis: true,
+            include_p_values: true,
+            include_effect_sizes: true,
+            decimal_places_pct: 1,
+            decimal_places_p: 3,
+            decimal_places_effect: 2,
+            bold_significant: true,
+            caption_prefix: "Table"
+        }
+    }
+
+    /// Minimal export config (for internal reports)
+    fn minimal_export_config() -> ExportConfig {
+        ExportConfig {
+            include_cis: false,
+            include_p_values: true,
+            include_effect_sizes: false,
+            decimal_places_pct: 0,
+            decimal_places_p: 3,
+            decimal_places_effect: 1,
+            bold_significant: false,
+            caption_prefix: ""
+        }
+    }
+}
+
+// ============================================================================
+// EXAMPLE USAGE
+// ============================================================================
+//
+// // Generate a publication report from experiment results
+// let report = generate_publication_report(experiment_result)
+//
+// // Export to different formats
+// let json_output = export_report_json(report)
+// let latex_output = export_report_latex(report)
+// let markdown_output = export_report_markdown(report)
+// let csv_output = export_report_csv(report)
+//
+// // Quick comparison between two guidelines
+// let comparison = compare_two_guidelines(treatment_score, control_score)
+//
+// // Generate forest plot data
+// let forest_data = generate_response_forest_plot(comparisons)
+//
+// // Calculate NNT
+// let nnt = calculate_nnt(0.65, 0.50)  // NNT = 1/(0.65-0.50) = 6.67
+//
+// // Use preset configurations
+// let config = presets::oncology_config()
+// let export_cfg = presets::publication_export_config()

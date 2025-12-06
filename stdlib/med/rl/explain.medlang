@@ -1,0 +1,125 @@
+// Week 36: Policy Distillation & Rule Extraction
+//
+// Provides tools for converting black-box RL policies into interpretable
+// decision trees that can be analyzed, visualized, and compared to clinical
+// guidelines.
+
+module med.rl.explain;
+
+import med.rl::{RLEnvConfig, RLPolicy, PolicyEvalReport};
+
+/// Configuration for policy distillation into a decision tree
+type DistillConfig = {
+  // Number of episodes to sample from the original policy
+  n_episodes: Int;
+
+  // Maximum steps per episode (upper bound; env may terminate earlier)
+  max_steps_per_episode: Int;
+
+  // Maximum depth of the decision tree
+  // Smaller values → simpler, more interpretable rules
+  // Larger values → better fidelity to original policy
+  max_depth: Int;
+
+  // Minimum number of samples required in a leaf node
+  // Larger values → more robust splits, simpler tree
+  // Smaller values → more detailed rules, potential overfitting
+  min_samples_leaf: Int;
+};
+
+/// Fidelity metrics for the distilled tree
+type DistillReport = {
+  // Number of (state, action) pairs used for training
+  n_train_samples: Int;
+
+  // Fraction of training samples where tree matches original policy
+  train_accuracy: Float;
+
+  // Fraction of held-out eval samples where tree matches original policy
+  // This is the key metric: how well does the tree approximate the policy?
+  eval_accuracy: Float;
+
+  // Per-action fidelity (accuracy for each dose level)
+  // Useful to identify if tree fails on specific actions
+  per_action_accuracy: Vector<Float>;
+
+  // Tree complexity metrics
+  tree_depth: Int;      // Maximum depth of the tree
+  n_nodes: Int;         // Total number of nodes (splits + leaves)
+};
+
+/// Distilled policy represented as a decision tree
+///
+/// This is an opaque handle in MedLang. The tree structure is available
+/// via the runtime for visualization and analysis, but not directly
+/// manipulable in MedLang code.
+type DistilledPolicy = opaque;
+
+/// Result of distillation: both the tree and the quality report
+type DistillResult = {
+  policy: DistilledPolicy;
+  report: DistillReport;
+};
+
+export type DistillConfig;
+export type DistillReport;
+export type DistilledPolicy;
+export type DistillResult;
+
+/// Distill an RL policy into a decision tree representation.
+///
+/// This function:
+/// 1. Samples (state, action) pairs from the policy in the environment
+/// 2. Trains a CART-style decision tree classifier
+/// 3. Returns the tree and a fidelity report
+///
+/// The distilled tree can be:
+/// - Simulated in the environment (via simulate_distilled_policy)
+/// - Exported to JSON for visualization
+/// - Converted to human-readable rules (future)
+/// - Compared to clinical guidelines (future)
+///
+/// Example usage:
+/// ```
+/// let result: DistillResult = distill_policy_tree(env_cfg, policy, distill_cfg);
+/// let tree: DistilledPolicy = result.policy;
+/// let report: DistillReport = result.report;
+///
+/// print("Tree fidelity: " + report.eval_accuracy);
+/// print("Tree depth: " + report.tree_depth);
+/// ```
+fn distill_policy_tree(
+  env_cfg: RLEnvConfig;
+  policy: RLPolicy;
+  cfg: DistillConfig;
+) -> DistillResult;
+
+/// Simulate the distilled policy in the environment for comparison.
+///
+/// This runs the decision tree policy in the same way as the original
+/// RL policy, allowing direct comparison of:
+/// - Average reward
+/// - Safety metrics (contract violations, toxicity)
+/// - Episode length
+///
+/// Example usage:
+/// ```
+/// // Distill policy
+/// let result = distill_policy_tree(env_cfg, policy, distill_cfg);
+/// let tree = result.policy;
+///
+/// // Compare performance
+/// let orig_eval = simulate_policy_rl(env_cfg, policy, 500);
+/// let tree_eval = simulate_distilled_policy(env_cfg, tree, 500);
+///
+/// print("Original avg reward: " + orig_eval.avg_reward);
+/// print("Tree avg reward: " + tree_eval.avg_reward);
+/// ```
+fn simulate_distilled_policy(
+  env_cfg: RLEnvConfig;
+  distilled: DistilledPolicy;
+  n_episodes: Int;
+) -> PolicyEvalReport;
+
+export fn distill_policy_tree;
+export fn simulate_distilled_policy;

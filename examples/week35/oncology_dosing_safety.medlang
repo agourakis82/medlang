@@ -1,0 +1,279 @@
+// Week 35 Example: RL Policy Safety Analysis for Oncology Dosing
+//
+// This example demonstrates how to:
+// 1. Train an RL policy for dose optimization
+// 2. Run comprehensive safety analysis on the trained policy
+// 3. Check policy compliance with safety thresholds
+//
+// The safety analysis tracks:
+// - Severe toxicity events (grade 4+)
+// - Contract violations
+// - Dose limit violations
+// - Large dose changes
+
+module examples.week35.oncology_dosing_safety;
+
+import med.rl::{
+  RLEnvConfig,
+  RLTrainConfig,
+  RLPolicy,
+  RLTrainReport,
+  train_policy_rl,
+};
+
+import med.rl.safety::{
+  PolicySafetyConfig,
+  PolicySafetyReport,
+  check_policy_safety,
+};
+
+import med.ml.backend::{BackendKind};
+
+// ============================================================================
+// Environment Configuration
+// ============================================================================
+
+/// Configure the RL environment for oncology dosing
+fn create_env_config() -> RLEnvConfig {
+  {
+    // Stub evidence program (in production, this would be a real QSP model)
+    evidence_program = "oncology_qsp";
+
+    // Use surrogate backend for fast simulation
+    backend = BackendKind::Surrogate;
+
+    // Treatment cycles (e.g., 6 cycles of chemotherapy)
+    n_cycles = 6;
+
+    // Available dose levels in mg
+    // 0 = no dose, 50-300 = increasing intensity
+    dose_levels = [0.0, 50.0, 100.0, 150.0, 200.0, 250.0, 300.0];
+
+    // Reward weights
+    w_response = 1.0;      // Weight for tumor response
+    w_tox = 2.0;           // Weight for toxicity penalty
+    contract_penalty = 10.0; // Penalty for safety contract violations
+  }
+}
+
+// ============================================================================
+// Training Configuration
+// ============================================================================
+
+/// Configure RL training parameters
+fn create_train_config() -> RLTrainConfig {
+  {
+    // Train for 500 episodes (virtual patients)
+    n_episodes = 500;
+
+    // Maximum 10 steps per episode (safety limit)
+    max_steps_per_episode = 10;
+
+    // Discount factor (how much to value future rewards)
+    gamma = 0.95;
+
+    // Learning rate
+    alpha = 0.1;
+
+    // Exploration schedule (epsilon-greedy)
+    eps_start = 0.3;  // Start with 30% exploration
+    eps_end = 0.05;   // End with 5% exploration
+  }
+}
+
+// ============================================================================
+// Safety Analysis Configuration
+// ============================================================================
+
+/// Configure safety analysis with clinical thresholds
+fn create_safety_config_strict() -> PolicySafetyConfig {
+  {
+    // Evaluate over 1000 virtual patients for statistical power
+    n_episodes = 1000;
+
+    // Maximum steps per episode (same as training)
+    max_steps_per_episode = 10;
+
+    // Hard dose limits
+    max_dose_mg = 300.0;      // No dose above 300mg
+    max_delta_dose_mg = 150.0; // No single-step change > 150mg
+
+    // Toxicity thresholds
+    // Allow at most 5% of episodes to have grade 4+ toxicity
+    max_severe_toxicity_episodes = 50;
+
+    // Contract violation thresholds
+    // Allow at most 10% of episodes to have contract violations
+    max_total_contract_violations = 100;
+
+    // Optional guideline gating (disabled for this example)
+    use_guideline_gate = false;
+    guideline_name = null;
+
+    // Random seed for reproducibility
+    seed = 12345;
+  }
+}
+
+/// More lenient safety config for initial development
+fn create_safety_config_lenient() -> PolicySafetyConfig {
+  {
+    n_episodes = 500;
+    max_steps_per_episode = 10;
+
+    // More permissive limits
+    max_dose_mg = 350.0;
+    max_delta_dose_mg = 200.0;
+
+    // Allow more safety events during development
+    max_severe_toxicity_episodes = 100;  // 20%
+    max_total_contract_violations = 150; // 30%
+
+    use_guideline_gate = false;
+    guideline_name = null;
+    seed = 12345;
+  }
+}
+
+// ============================================================================
+// Main Workflow
+// ============================================================================
+
+/// Train a policy and analyze its safety
+fn main() -> PolicySafetyReport {
+  // Step 1: Configure environment
+  let env_cfg: RLEnvConfig = create_env_config();
+
+  // Step 2: Configure training
+  let train_cfg: RLTrainConfig = create_train_config();
+
+  // Step 3: Train the policy
+  print("Training RL policy for oncology dosing...");
+  let train_result: (RLTrainReport, RLPolicy) = train_policy_rl(env_cfg, train_cfg);
+  let policy: RLPolicy = train_result.1;
+
+  print("Training complete!");
+  print("Average reward: " + train_result.0.avg_reward);
+
+  // Step 4: Configure safety analysis
+  let safety_cfg: PolicySafetyConfig = create_safety_config_strict();
+
+  // Step 5: Run comprehensive safety analysis
+  print("Running safety analysis over 1000 virtual patients...");
+  let safety_report: PolicySafetyReport = check_policy_safety(
+    env_cfg,
+    policy,
+    safety_cfg
+  );
+
+  // Step 6: Display safety results
+  print("\n=== SAFETY ANALYSIS RESULTS ===");
+  print("Episodes evaluated: " + safety_report.n_episodes_evaluated);
+  print("Average reward: " + safety_report.avg_reward);
+  print("");
+  print("Toxicity Metrics:");
+  print("  Severe toxicity episodes: " + safety_report.episodes_with_severe_toxicity);
+  print("  Total grade 4+ events: " + safety_report.total_severe_toxicity_events);
+  print("");
+  print("Contract Violations:");
+  print("  Total violations: " + safety_report.total_contract_violations);
+  print("");
+  print("Dose Safety:");
+  print("  Doses out of range: " + safety_report.total_dose_out_of_range);
+  print("  Large dose changes: " + safety_report.total_dose_change_too_large);
+  print("");
+  print("Overall:");
+  print("  Episodes with any violation: " + safety_report.episodes_with_any_violation);
+  print("  SAFETY PASS: " + safety_report.safety_pass);
+
+  // Return the report for further analysis
+  safety_report
+}
+
+// ============================================================================
+// Comparative Analysis
+// ============================================================================
+
+/// Compare two policies' safety profiles
+fn compare_policies(
+  policy1: RLPolicy;
+  policy2: RLPolicy;
+  env_cfg: RLEnvConfig;
+) -> Bool {
+  let safety_cfg: PolicySafetyConfig = create_safety_config_strict();
+
+  print("Analyzing Policy 1...");
+  let report1: PolicySafetyReport = check_policy_safety(env_cfg, policy1, safety_cfg);
+
+  print("Analyzing Policy 2...");
+  let report2: PolicySafetyReport = check_policy_safety(env_cfg, policy2, safety_cfg);
+
+  print("\n=== POLICY COMPARISON ===");
+  print("Policy 1:");
+  print("  Avg reward: " + report1.avg_reward);
+  print("  Severe tox episodes: " + report1.episodes_with_severe_toxicity);
+  print("  Safety pass: " + report1.safety_pass);
+
+  print("\nPolicy 2:");
+  print("  Avg reward: " + report2.avg_reward);
+  print("  Severe tox episodes: " + report2.episodes_with_severe_toxicity);
+  print("  Safety pass: " + report2.safety_pass);
+
+  // Return true if policy 1 is better (higher reward AND safer)
+  if report1.safety_pass && !report2.safety_pass {
+    true
+  } else if !report1.safety_pass && report2.safety_pass {
+    false
+  } else {
+    // Both pass or both fail - compare by reward
+    report1.avg_reward > report2.avg_reward
+  }
+}
+
+// ============================================================================
+// Safety Threshold Tuning
+// ============================================================================
+
+/// Test policy against multiple safety threshold levels
+fn test_threshold_sensitivity(policy: RLPolicy; env_cfg: RLEnvConfig) -> Vector<Bool> {
+  let mut results: Vector<Bool> = [];
+
+  // Very strict thresholds
+  let cfg_strict: PolicySafetyConfig = {
+    n_episodes = 1000;
+    max_steps_per_episode = 10;
+    max_dose_mg = 250.0;
+    max_delta_dose_mg = 100.0;
+    max_severe_toxicity_episodes = 20;  // 2%
+    max_total_contract_violations = 30; // 3%
+    use_guideline_gate = false;
+    guideline_name = null;
+    seed = 12345;
+  };
+
+  // Moderate thresholds
+  let cfg_moderate: PolicySafetyConfig = create_safety_config_strict();
+
+  // Lenient thresholds
+  let cfg_lenient: PolicySafetyConfig = create_safety_config_lenient();
+
+  // Test against each threshold level
+  print("Testing strict thresholds...");
+  let report_strict: PolicySafetyReport = check_policy_safety(env_cfg, policy, cfg_strict);
+  results = results.push(report_strict.safety_pass);
+
+  print("Testing moderate thresholds...");
+  let report_moderate: PolicySafetyReport = check_policy_safety(env_cfg, policy, cfg_moderate);
+  results = results.push(report_moderate.safety_pass);
+
+  print("Testing lenient thresholds...");
+  let report_lenient: PolicySafetyReport = check_policy_safety(env_cfg, policy, cfg_lenient);
+  results = results.push(report_lenient.safety_pass);
+
+  print("\n=== THRESHOLD SENSITIVITY ===");
+  print("Strict:   " + (if report_strict.safety_pass { "PASS" } else { "FAIL" }));
+  print("Moderate: " + (if report_moderate.safety_pass { "PASS" } else { "FAIL" }));
+  print("Lenient:  " + (if report_lenient.safety_pass { "PASS" } else { "FAIL" }));
+
+  results
+}

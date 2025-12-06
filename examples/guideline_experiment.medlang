@@ -1,0 +1,336 @@
+// ═══════════════════════════════════════════════════════════════════════════════
+// Example: Guideline Evaluation Experiment
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// This example demonstrates the Week 47 experiment orchestration system:
+// - Define multiple dosing guidelines to compare
+// - Configure environment scenarios for robustness testing
+// - Set up clinical constraints for feasibility analysis
+// - Run experiment with full provenance tracking
+// - Generate comprehensive reports
+
+import med.rl.experiment::{
+  ExperimentConfig,
+  GuidelineDefinition,
+  EnvScenario,
+  ExecutionMode,
+  ExperimentResult,
+  run_experiment,
+  compare_experiments,
+  experiment_config,
+  guideline,
+  guideline_named,
+  scenario,
+  scenario_with_param,
+  with_constraints,
+  with_pareto,
+  with_reference,
+  with_scenarios,
+  with_parallel,
+  with_author,
+  with_tags,
+  with_seeds,
+  default_seeds
+};
+
+import med.rl.env_dose_tox::{DoseToxEnvConfig};
+import med.rl.constraints::{
+  ConstraintSet,
+  at_least,
+  at_most,
+  all_of,
+  presets
+};
+import med.rl.env_robustness_pareto::{ParetoConfig, pareto_config};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STEP 1: Define Guidelines to Compare
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Standard 3+3 dose escalation
+let guideline_3plus3 = guideline_named("3plus3", "Standard 3+3 Design");
+
+// Bayesian Optimal Interval (BOIN) design
+let guideline_boin = guideline_named("boin", "BOIN Design");
+
+// Continual Reassessment Method (CRM)
+let guideline_crm = guideline_named("crm", "CRM Design");
+
+// Modified Toxicity Probability Interval (mTPI)
+let guideline_mtpi = guideline_named("mtpi", "mTPI Design");
+
+// Keyboard design
+let guideline_keyboard = guideline_named("keyboard", "Keyboard Design");
+
+let all_guidelines = [
+  guideline_3plus3,
+  guideline_boin,
+  guideline_crm,
+  guideline_mtpi,
+  guideline_keyboard
+];
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STEP 2: Define Environment Scenarios
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Baseline scenario
+let baseline = scenario("baseline");
+
+// High-response population (e.g., biomarker-selected)
+let high_response = scenario_with_param("high_response", "response_multiplier", 1.3);
+
+// High-toxicity population (e.g., frail patients)
+let high_toxicity = scenario_with_param("high_toxicity", "tox_multiplier", 1.5);
+
+// Low-response scenario (resistant tumor)
+let low_response = scenario_with_param("low_response", "response_multiplier", 0.7);
+
+// Combined adverse scenario
+let adverse = {
+  name = "adverse";
+  description = Some("Low response + high toxicity");
+  param_overrides = {
+    "response_multiplier": 0.7,
+    "tox_multiplier": 1.4
+  };
+  weight = 0.5;  // Lower weight for extreme scenario
+};
+
+let all_scenarios = [
+  baseline,
+  high_response,
+  high_toxicity,
+  low_response,
+  adverse
+];
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STEP 3: Define Clinical Constraints
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Use FDA Phase I oncology preset and add custom constraints
+let fda_constraints = presets::fda_phase1_oncology();
+
+// Custom constraint set combining presets with additional requirements
+let custom_constraints = all_of([
+  // Response rate >= 20%
+  at_least("mean_response", 0.20),
+
+  // Grade 3+ toxicity <= 35%
+  at_most("mean_grade3plus_rate", 0.35),
+
+  // RDI >= 70%
+  at_least("mean_rdi", 0.70),
+
+  // Worst-case response >= 15%
+  at_least("worst_response", 0.15)
+]);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STEP 4: Configure Pareto Analysis
+// ═══════════════════════════════════════════════════════════════════════════════
+
+let pareto = pareto_config([
+  { metric = "mean_response"; maximize = true },
+  { metric = "mean_grade3plus_rate"; maximize = false },
+  { metric = "mean_rdi"; maximize = true }
+]);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STEP 5: Build Experiment Configuration
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Base environment configuration
+let base_env = DoseToxEnvConfig::default();
+
+// Build the experiment
+let experiment = experiment_config(
+    "Phase I Dose Escalation Guidelines Comparison",
+    all_guidelines,
+    base_env
+  )
+  |> with_reference("3plus3")  // Compare all guidelines to standard 3+3
+  |> with_scenarios(all_scenarios)
+  |> with_constraints(custom_constraints)
+  |> with_pareto(pareto)
+  |> with_parallel()  // Enable parallel execution
+  |> with_author("Clinical Operations Team")
+  |> with_tags(["phase1", "oncology", "dose-escalation", "2024-Q4"])
+  |> with_seeds(42, 123, 456);  // Explicit seeds for reproducibility
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STEP 6: Run Experiment
+// ═══════════════════════════════════════════════════════════════════════════════
+
+print("Starting guideline evaluation experiment...");
+print("Guidelines: 5");
+print("Scenarios: 5");
+print("");
+
+let result = run_experiment(experiment);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STEP 7: Analyze Results
+// ═══════════════════════════════════════════════════════════════════════════════
+
+print("═══════════════════════════════════════════════════════════════");
+print("                    EXPERIMENT RESULTS                         ");
+print("═══════════════════════════════════════════════════════════════");
+print("");
+
+// Overall summary
+print("SUMMARY");
+print("───────");
+print(format("Status: {}", result.status));
+print(format("Total Duration: {:.2}s", result.timing.total_duration_ms / 1000.0));
+print(format("Guidelines Evaluated: {}", result.summary.n_guidelines));
+print(format("Scenarios Tested: {}", result.summary.n_scenarios));
+print(format("Feasible Guidelines: {}", result.summary.n_feasible));
+print(format("Pareto-Optimal: {}", result.summary.n_pareto_optimal));
+print("");
+
+// Best performers
+print("TOP PERFORMERS");
+print("──────────────");
+match result.summary.best_by_score {
+  Some(best) => print(format("Best by Score: {}", best));
+  None => print("Best by Score: N/A");
+}
+match result.summary.best_by_response {
+  Some(best) => print(format("Best by Response: {}", best));
+  None => print("Best by Response: N/A");
+}
+print("");
+
+// Pareto optimal set
+if result.summary.pareto_optimal.len() > 0 {
+  print("PARETO-OPTIMAL SET");
+  print("──────────────────");
+  for g in result.summary.pareto_optimal {
+    print(format("  - {}", g));
+  }
+  print("");
+}
+
+// Key insights
+if result.summary.insights.len() > 0 {
+  print("KEY INSIGHTS");
+  print("────────────");
+  for insight in result.summary.insights {
+    print(format("  * {}", insight));
+  }
+  print("");
+}
+
+// Reference comparison (vs 3+3)
+match result.reference_comparison {
+  Some(ref_comp) => {
+    print("COMPARISON TO REFERENCE (3+3)");
+    print("─────────────────────────────");
+    for comparison in ref_comp.comparisons {
+      print(format("  {} vs {}:", comparison.guideline_a_id, comparison.guideline_b_id));
+      print(format("    Response: {:+.1}%", comparison.response_diff * 100.0));
+      print(format("    Toxicity: {:+.1}%", comparison.tox_diff * 100.0));
+      print(format("    Score: {:+.3}", comparison.score_diff));
+    }
+    print("");
+  }
+  None => {}
+}
+
+// Per-guideline scores
+print("GUIDELINE SCORES");
+print("────────────────");
+for score in result.scores {
+  print(format("{}", score.guideline_id));
+  print(format("  Response:     {:.1}% (worst: {:.1}%)",
+               score.mean_response * 100.0,
+               score.worst_response * 100.0));
+  print(format("  Grade 3+ Tox: {:.1}% (worst: {:.1}%)",
+               score.mean_grade3plus_rate * 100.0,
+               score.worst_grade3plus_rate * 100.0));
+  print(format("  RDI:          {:.1}% (worst: {:.1}%)",
+               score.mean_rdi * 100.0,
+               score.worst_rdi * 100.0));
+  print(format("  Score:        {:.3} (worst: {:.3})",
+               score.score_mean,
+               score.score_worst));
+  print("");
+}
+
+// Constraint feasibility
+match result.constraint_analysis {
+  Some(ca) => {
+    print("CONSTRAINT FEASIBILITY");
+    print("──────────────────────");
+    for feas in ca.feasibility {
+      let status = if feas.hard_feasible { "FEASIBLE" } else { "INFEASIBLE" };
+      print(format("  {}: {} (violations: {} hard, {} soft)",
+                   feas.guideline_id,
+                   status,
+                   feas.n_hard_violations,
+                   feas.n_soft_violations));
+    }
+    print("");
+  }
+  None => {}
+}
+
+// Provenance information
+print("PROVENANCE");
+print("──────────");
+print(format("Experiment ID: {}", result.provenance.experiment_id));
+print(format("Config Hash: {}", result.provenance.config_hash));
+match result.provenance.git.commit_hash {
+  Some(hash) => print(format("Git Commit: {}", hash));
+  None => {}
+}
+match result.provenance.git.branch {
+  Some(branch) => print(format("Git Branch: {}", branch));
+  None => {}
+}
+if result.provenance.git.dirty {
+  print("WARNING: Uncommitted changes present");
+}
+print(format("Seeds: master={}, scenario={}, simulation={}",
+             result.provenance.seeds.master_seed,
+             result.provenance.seeds.scenario_seed,
+             result.provenance.seeds.simulation_seed));
+print("");
+
+// Warnings/Errors
+if result.warnings.len() > 0 {
+  print("WARNINGS");
+  print("────────");
+  for warn in result.warnings {
+    print(format("  * {}", warn));
+  }
+  print("");
+}
+
+if result.errors.len() > 0 {
+  print("ERRORS");
+  print("──────");
+  for err in result.errors {
+    print(format("  * [{}] {}", err.stage, err.message));
+  }
+  print("");
+}
+
+print("═══════════════════════════════════════════════════════════════");
+print("                    END OF REPORT                              ");
+print("═══════════════════════════════════════════════════════════════");
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STEP 8: Export Results
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Results are automatically exported to experiment_outputs/ directory:
+// - {experiment_id}_result.json   - Full JSON result
+// - {experiment_id}_scores.csv    - Scores summary
+// - {experiment_id}_feasibility.csv - Constraint feasibility
+// - {experiment_id}_regulatory.txt  - Regulatory summary report
+
+print("");
+print("Reports generated in: experiment_outputs/");

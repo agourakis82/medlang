@@ -1,0 +1,100 @@
+// Week 35: RL Policy Safety Analysis
+//
+// Provides types and functions for analyzing RL policy safety across
+// virtual patient cohorts, tracking toxicity, contract violations, and
+// dose safety metrics.
+
+module med.rl.safety;
+
+import med.rl::{RLEnvConfig, RLPolicy};
+
+/// Kinds of safety violations tracked at RL level
+enum SafetyViolationKind {
+  ContractViolation;      // underlying contract system fired
+  SevereToxicity;         // e.g., toxicity grade 4 event
+  DoseOutOfRange;         // action exceeds configured bounds
+  DoseChangeTooLarge;     // Δdose above configured limit
+  GuidelineViolation;     // (optional) violation of eligibility or hard rule
+}
+
+/// Individual safety violation
+type SafetyViolation = {
+  kind: SafetyViolationKind;
+  episode: Int;
+  step: Int;
+  message: String;
+};
+
+/// Configuration for policy safety analysis
+type PolicySafetyConfig = {
+  // Number of episodes (virtual patients) to simulate
+  n_episodes: Int;
+  // Maximum steps per episode (cycles)
+  max_steps_per_episode: Int;
+
+  // Hard limits for dose safety (optional; env may enforce more)
+  max_dose_mg: Float?;
+  max_delta_dose_mg: Float?;
+
+  // Thresholds for toxicity: e.g., allow at most this many severe events
+  max_severe_toxicity_episodes: Int?;
+  max_total_contract_violations: Int?;
+
+  // Optional: gate episodes using a static guideline (eligibility)
+  use_guideline_gate: Bool;
+  guideline_name: String?;  // name of @guideline fn to call if gate enabled
+
+  // Random seed for reproducibility
+  seed: Int?;
+};
+
+/// Aggregated safety metrics for a policy
+type PolicySafetyReport = {
+  n_episodes: Int;
+  // how many episodes actually ran (some may be skipped by guideline gate)
+  n_episodes_evaluated: Int;
+
+  // Aggregate metrics
+  total_contract_violations: Int;
+  total_severe_toxicity_events: Int;
+  total_dose_out_of_range: Int;
+  total_dose_change_too_large: Int;
+  total_guideline_violations: Int;
+
+  // Episode-level statistics
+  episodes_with_severe_toxicity: Int;
+  episodes_with_any_violation: Int;
+
+  // Sanity: average reward if available
+  avg_reward: Float;
+
+  // Pass/fail relative to thresholds in PolicySafetyConfig
+  safety_pass: Bool;
+
+  // Sampled violations (for debugging, capped at 100)
+  sample_violations: Vector<SafetyViolation>;
+};
+
+export enum SafetyViolationKind;
+export type SafetyViolation;
+export type PolicySafetyConfig;
+export type PolicySafetyReport;
+
+/// Top-level safety check entrypoint (implemented as built-in in Rust)
+///
+/// Runs a learned policy over many virtual patients and aggregates
+/// safety-critical metrics including:
+/// - Contract violations
+/// - Severe toxicity events (grade 4+)
+/// - Dose limit violations
+/// - Large dose changes
+///
+/// Returns a comprehensive PolicySafetyReport with pass/fail status
+/// based on configured thresholds.
+fn check_policy_safety(
+  env_cfg: RLEnvConfig;
+  policy: RLPolicy;
+  cfg: PolicySafetyConfig;
+) -> PolicySafetyReport;
+
+export fn check_policy_safety;

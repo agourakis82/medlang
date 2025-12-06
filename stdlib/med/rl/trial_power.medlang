@@ -1,0 +1,664 @@
+// Week 49: Trial Design & Power Analysis (v2.0)
+//
+// MedLang stdlib module for comprehensive trial planning:
+// - Power and sample size calculations
+// - Multiple test types (superiority, non-inferiority, equivalence)
+// - Multiple comparison adjustments
+// - Group sequential designs
+// - Regulatory documentation generation
+
+module med.rl.trial_power
+
+// ============================================================================
+// PART 1: ENDPOINT AND TEST TYPES
+// ============================================================================
+
+/// Primary endpoint type
+enum EndpointType {
+    BinaryResponse     // Binary response rate (e.g., ORR)
+    BinaryToxicity     // Binary toxicity rate (e.g., Grade >= 3)
+    Continuous         // Continuous outcome
+    TimeToEvent        // Time-to-event (e.g., PFS, OS)
+}
+
+/// Test type / hypothesis structure
+enum TestType {
+    TwoSidedSuperiority                    // H0: p_exp = p_ctrl
+    OneSidedSuperiority                    // H0: p_exp <= p_ctrl
+    NonInferiority { margin: Float }       // H0: p_exp <= p_ctrl - margin
+    Equivalence { margin: Float }          // H0: |p_exp - p_ctrl| >= margin
+}
+
+/// Multiple comparison adjustment method
+enum MultipleComparisonMethod {
+    None                // No adjustment
+    Bonferroni          // Divide alpha by k
+    Holm                // Holm step-down
+    Hochberg            // Hochberg step-up
+    BenjaminiHochberg   // FDR control
+    Dunnett             // Many-to-one
+    FixedSequence       // Gatekeeping
+}
+
+/// Alpha spending function for group sequential
+enum SpendingFunction {
+    OBrienFleming       // O'Brien-Fleming bounds
+    Pocock              // Pocock bounds
+    LanDeMetsOBF        // Lan-DeMets approximation
+    HwangShihDeCani     // Hwang-Shih-DeCani
+}
+
+/// Computation mode
+enum ComputationMode {
+    PowerFromN          // Given n, compute power
+    NFromPower          // Given power, compute n
+    PowerCurve          // Compute power curve
+    Full                // Compute everything
+}
+
+// ============================================================================
+// PART 2: CONFIGURATION TYPES
+// ============================================================================
+
+/// Allocation ratio (experimental:control)
+type AllocationRatio {
+    experimental: Float
+    control: Float
+}
+
+/// Create balanced allocation (1:1)
+fn balanced_allocation() -> AllocationRatio {
+    AllocationRatio {
+        experimental: 1.0,
+        control: 1.0
+    }
+}
+
+/// Create unbalanced allocation (e.g., 2:1)
+fn unbalanced_allocation(exp_to_ctrl: Float) -> AllocationRatio {
+    AllocationRatio {
+        experimental: exp_to_ctrl,
+        control: 1.0
+    }
+}
+
+/// Dropout/attrition configuration
+type DropoutConfig {
+    control_dropout_rate: Float
+    experimental_dropout_rate: Float
+    inflate_for_dropout: Bool
+}
+
+/// Default dropout config (10% each arm)
+fn default_dropout() -> DropoutConfig {
+    DropoutConfig {
+        control_dropout_rate: 0.10,
+        experimental_dropout_rate: 0.10,
+        inflate_for_dropout: true
+    }
+}
+
+/// Group sequential design configuration
+type GroupSequentialConfig {
+    n_analyses: Int
+    info_fractions: List<Float>
+    alpha_spending: SpendingFunction
+    beta_spending: Option<SpendingFunction>
+    include_futility: Bool
+}
+
+/// Fixed design (no interim analyses)
+fn fixed_design() -> GroupSequentialConfig {
+    GroupSequentialConfig {
+        n_analyses: 1,
+        info_fractions: [1.0],
+        alpha_spending: SpendingFunction::OBrienFleming,
+        beta_spending: None,
+        include_futility: false
+    }
+}
+
+/// Two interim O'Brien-Fleming design
+fn gs_2interim_obf() -> GroupSequentialConfig {
+    GroupSequentialConfig {
+        n_analyses: 3,
+        info_fractions: [0.33, 0.67, 1.0],
+        alpha_spending: SpendingFunction::OBrienFleming,
+        beta_spending: None,
+        include_futility: false
+    }
+}
+
+/// One interim with futility
+fn gs_1interim_futility() -> GroupSequentialConfig {
+    GroupSequentialConfig {
+        n_analyses: 2,
+        info_fractions: [0.5, 1.0],
+        alpha_spending: SpendingFunction::OBrienFleming,
+        beta_spending: Some(SpendingFunction::OBrienFleming),
+        include_futility: true
+    }
+}
+
+/// Clinical thresholds for interpretation
+type ClinicalThresholds {
+    mcid_response: Float
+    mcid_toxicity: Float
+}
+
+/// Default clinical thresholds
+fn default_thresholds() -> ClinicalThresholds {
+    ClinicalThresholds {
+        mcid_response: 0.10,
+        mcid_toxicity: 0.05
+    }
+}
+
+// ============================================================================
+// PART 3: TRIAL POWER CONFIGURATION
+// ============================================================================
+
+/// Complete trial power configuration
+type TrialPowerConfig {
+    // Basic identifiers
+    control_guideline_id: String
+    experimental_guideline_ids: List<String>
+
+    // Endpoint and test
+    endpoint: EndpointType
+    test_type: TestType
+
+    // Statistical parameters
+    alpha: Float
+    target_power: Float
+    n_per_arm: Option<Int>
+    n_total: Option<Int>
+
+    // Design parameters
+    allocation: AllocationRatio
+    dropout: DropoutConfig
+    group_sequential: GroupSequentialConfig
+
+    // Multiple comparisons
+    multiplicity_adjustment: MultipleComparisonMethod
+
+    // Computation options
+    computation_mode: ComputationMode
+    curve_n_min: Int
+    curve_n_max: Int
+    curve_n_step: Int
+
+    // Uncertainty
+    propagate_uncertainty: Bool
+    uncertainty_samples: Int
+    power_ci_level: Float
+
+    // Clinical thresholds
+    clinical_thresholds: Option<ClinicalThresholds>
+}
+
+/// Create simple superiority trial config
+fn superiority_trial(
+    control_id: String,
+    experimental_ids: List<String>,
+    endpoint: EndpointType,
+    n_per_arm: Int
+) -> TrialPowerConfig {
+    TrialPowerConfig {
+        control_guideline_id: control_id,
+        experimental_guideline_ids: experimental_ids,
+        endpoint: endpoint,
+        test_type: TestType::TwoSidedSuperiority,
+        alpha: 0.05,
+        target_power: 0.80,
+        n_per_arm: Some(n_per_arm),
+        n_total: None,
+        allocation: balanced_allocation(),
+        dropout: default_dropout(),
+        group_sequential: fixed_design(),
+        multiplicity_adjustment: MultipleComparisonMethod::None,
+        computation_mode: ComputationMode::Full,
+        curve_n_min: 20,
+        curve_n_max: 500,
+        curve_n_step: 10,
+        propagate_uncertainty: false,
+        uncertainty_samples: 1000,
+        power_ci_level: 0.95,
+        clinical_thresholds: None
+    }
+}
+
+/// Create non-inferiority trial config
+fn noninferiority_trial(
+    control_id: String,
+    experimental_ids: List<String>,
+    endpoint: EndpointType,
+    n_per_arm: Int,
+    margin: Float
+) -> TrialPowerConfig {
+    TrialPowerConfig {
+        control_guideline_id: control_id,
+        experimental_guideline_ids: experimental_ids,
+        endpoint: endpoint,
+        test_type: TestType::NonInferiority { margin: margin },
+        alpha: 0.025,  // One-sided
+        target_power: 0.80,
+        n_per_arm: Some(n_per_arm),
+        n_total: None,
+        allocation: balanced_allocation(),
+        dropout: default_dropout(),
+        group_sequential: fixed_design(),
+        multiplicity_adjustment: MultipleComparisonMethod::None,
+        computation_mode: ComputationMode::Full,
+        curve_n_min: 20,
+        curve_n_max: 500,
+        curve_n_step: 10,
+        propagate_uncertainty: false,
+        uncertainty_samples: 1000,
+        power_ci_level: 0.95,
+        clinical_thresholds: None
+    }
+}
+
+/// Create equivalence trial config
+fn equivalence_trial(
+    control_id: String,
+    experimental_ids: List<String>,
+    endpoint: EndpointType,
+    n_per_arm: Int,
+    margin: Float
+) -> TrialPowerConfig {
+    TrialPowerConfig {
+        control_guideline_id: control_id,
+        experimental_guideline_ids: experimental_ids,
+        endpoint: endpoint,
+        test_type: TestType::Equivalence { margin: margin },
+        alpha: 0.05,
+        target_power: 0.80,
+        n_per_arm: Some(n_per_arm),
+        n_total: None,
+        allocation: balanced_allocation(),
+        dropout: default_dropout(),
+        group_sequential: fixed_design(),
+        multiplicity_adjustment: MultipleComparisonMethod::None,
+        computation_mode: ComputationMode::Full,
+        curve_n_min: 20,
+        curve_n_max: 500,
+        curve_n_step: 10,
+        propagate_uncertainty: false,
+        uncertainty_samples: 1000,
+        power_ci_level: 0.95,
+        clinical_thresholds: None
+    }
+}
+
+// ============================================================================
+// PART 4: RESULT TYPES
+// ============================================================================
+
+/// Arm assumptions
+type ArmAssumption {
+    arm_name: String
+    guideline_id: String
+    is_control: Bool
+    p_event: Float
+    p_event_se: Option<Float>
+    p_event_ci: Option<ConfidenceInterval>
+    dropout_rate: Float
+}
+
+/// Analysis boundary for group sequential
+type AnalysisBoundary {
+    analysis_number: Int
+    info_fraction: Float
+    n_enrolled: Int
+    efficacy_z: Float
+    efficacy_p: Float
+    futility_z: Option<Float>
+    futility_p: Option<Float>
+    cumulative_alpha_spent: Float
+    cumulative_beta_spent: Option<Float>
+}
+
+/// Pairwise power result
+type PairwisePowerResult {
+    control_id: String
+    experimental_id: String
+
+    // Assumed parameters
+    p_control: Float
+    p_experimental: Float
+    effect_size: Float
+    relative_effect: Float
+
+    // Sample size
+    n_per_arm: Int
+    n_total: Int
+    n_per_arm_inflated: Int
+    n_total_inflated: Int
+
+    // Power results
+    power: Float
+    power_ci: Option<ConfidenceInterval>
+    required_n_per_arm: Option<Int>
+    required_n_total: Option<Int>
+
+    // Test details
+    endpoint: EndpointType
+    test_type: TestType
+    alpha: Float
+    alpha_adjusted: Float
+    z_critical: Float
+
+    // Interpretation
+    is_clinically_meaningful: Bool
+    is_adequately_powered: Bool
+    minimum_detectable_effect: Float
+
+    // Group sequential
+    analysis_boundaries: Option<List<AnalysisBoundary>>
+    expected_n_h1: Option<Float>
+    expected_n_h0: Option<Float>
+}
+
+/// Power curve point
+type PowerCurvePoint {
+    n_per_arm: Int
+    n_total: Int
+    power: Float
+    power_ci_lower: Option<Float>
+    power_ci_upper: Option<Float>
+}
+
+/// Complete power curve
+type PowerCurve {
+    control_id: String
+    experimental_id: String
+    effect_size: Float
+    alpha: Float
+    points: List<PowerCurvePoint>
+    n_for_target_power: Option<Int>
+    target_power: Float
+}
+
+/// Sensitivity analysis results
+type PowerSensitivity {
+    experimental_id: String
+    vary_p_control: List<(Float, Float)>
+    vary_p_experimental: List<(Float, Float)>
+    vary_n: List<(Int, Float)>
+    vary_effect: List<(Float, Float)>
+    detectable_effect_by_n: List<(Int, Float)>
+}
+
+/// Summary across all comparisons
+type TrialPowerSummary {
+    n_comparisons: Int
+    n_adequately_powered: Int
+    n_clinically_meaningful: Int
+    best_powered: Option<String>
+    largest_effect: Option<String>
+    min_n_for_all_powered: Option<Int>
+    recommendations: List<String>
+}
+
+/// Regulatory documentation
+type TrialDocumentation {
+    sap_power_section: String
+    assumptions_table_latex: String
+    power_table_latex: String
+    summary_markdown: String
+}
+
+/// Complete trial power result
+type TrialPowerResult {
+    config: TrialPowerConfig
+    arms: List<ArmAssumption>
+    pairwise: List<PairwisePowerResult>
+    power_curves: Option<List<PowerCurve>>
+    sensitivity: Option<List<PowerSensitivity>>
+    summary: TrialPowerSummary
+    documentation: TrialDocumentation
+}
+
+// ============================================================================
+// PART 5: BUILTIN FUNCTIONS
+// ============================================================================
+
+/// Main API: compute trial power from robustness scores
+fn compute_trial_power(
+    scores: List<GuidelineRobustnessScore>,
+    config: TrialPowerConfig
+) -> TrialPowerResult
+
+/// Quick power calculation (no full result structure)
+fn quick_power(
+    p_ctrl: Float,
+    p_exp: Float,
+    n_per_arm: Int,
+    alpha: Float,
+    two_sided: Bool
+) -> Float
+
+/// Quick sample size calculation
+fn quick_sample_size(
+    p_ctrl: Float,
+    p_exp: Float,
+    alpha: Float,
+    power: Float,
+    two_sided: Bool
+) -> Int
+
+/// Get SAP power section as text
+fn power_sap_section(result: TrialPowerResult) -> String
+
+/// Get power table as LaTeX
+fn power_table_latex(result: TrialPowerResult) -> String
+
+/// Get summary as Markdown
+fn power_summary_markdown(result: TrialPowerResult) -> String
+
+// ============================================================================
+// PART 6: UTILITY FUNCTIONS
+// ============================================================================
+
+/// Calculate z-critical value
+fn z_critical(alpha: Float, two_sided: Bool) -> Float {
+    if two_sided {
+        // z for alpha/2
+        1.96  // Approximation for alpha=0.05
+    } else {
+        1.645  // Approximation for alpha=0.05
+    }
+}
+
+/// Check if power is adequate
+fn is_adequately_powered(power: Float, target: Float) -> Bool {
+    power >= target
+}
+
+/// Calculate inflation factor for dropout
+fn dropout_inflation(dropout_rate: Float) -> Float {
+    1.0 / (1.0 - dropout_rate)
+}
+
+/// Inflate sample size for dropout
+fn inflate_for_dropout(n: Int, dropout_rate: Float) -> Int {
+    ceiling(n * dropout_inflation(dropout_rate))
+}
+
+// ============================================================================
+// PART 7: PRESETS FOR COMMON TRIAL TYPES
+// ============================================================================
+
+/// Preset configurations for common trial designs
+module presets {
+    /// Phase 2 oncology trial (single arm vs historical control)
+    fn phase2_oncology(
+        control_id: String,
+        experimental_id: String,
+        n_per_arm: Int
+    ) -> TrialPowerConfig {
+        TrialPowerConfig {
+            control_guideline_id: control_id,
+            experimental_guideline_ids: [experimental_id],
+            endpoint: EndpointType::BinaryResponse,
+            test_type: TestType::OneSidedSuperiority,
+            alpha: 0.05,
+            target_power: 0.80,
+            n_per_arm: Some(n_per_arm),
+            n_total: None,
+            allocation: balanced_allocation(),
+            dropout: DropoutConfig {
+                control_dropout_rate: 0.15,
+                experimental_dropout_rate: 0.15,
+                inflate_for_dropout: true
+            },
+            group_sequential: fixed_design(),
+            multiplicity_adjustment: MultipleComparisonMethod::None,
+            computation_mode: ComputationMode::Full,
+            curve_n_min: 20,
+            curve_n_max: 200,
+            curve_n_step: 10,
+            propagate_uncertainty: true,
+            uncertainty_samples: 1000,
+            power_ci_level: 0.95,
+            clinical_thresholds: Some(ClinicalThresholds {
+                mcid_response: 0.15,
+                mcid_toxicity: 0.10
+            })
+        }
+    }
+
+    /// Phase 3 confirmatory trial with interim analysis
+    fn phase3_confirmatory(
+        control_id: String,
+        experimental_ids: List<String>,
+        n_per_arm: Int
+    ) -> TrialPowerConfig {
+        TrialPowerConfig {
+            control_guideline_id: control_id,
+            experimental_guideline_ids: experimental_ids,
+            endpoint: EndpointType::BinaryResponse,
+            test_type: TestType::TwoSidedSuperiority,
+            alpha: 0.05,
+            target_power: 0.90,
+            n_per_arm: Some(n_per_arm),
+            n_total: None,
+            allocation: balanced_allocation(),
+            dropout: default_dropout(),
+            group_sequential: gs_2interim_obf(),
+            multiplicity_adjustment: if length(experimental_ids) > 1 {
+                MultipleComparisonMethod::Hochberg
+            } else {
+                MultipleComparisonMethod::None
+            },
+            computation_mode: ComputationMode::Full,
+            curve_n_min: 50,
+            curve_n_max: 500,
+            curve_n_step: 25,
+            propagate_uncertainty: true,
+            uncertainty_samples: 2000,
+            power_ci_level: 0.95,
+            clinical_thresholds: Some(default_thresholds())
+        }
+    }
+
+    /// Non-inferiority biosimilar trial
+    fn biosimilar_noninferiority(
+        control_id: String,
+        experimental_id: String,
+        n_per_arm: Int,
+        margin: Float
+    ) -> TrialPowerConfig {
+        TrialPowerConfig {
+            control_guideline_id: control_id,
+            experimental_guideline_ids: [experimental_id],
+            endpoint: EndpointType::BinaryResponse,
+            test_type: TestType::NonInferiority { margin: margin },
+            alpha: 0.025,  // One-sided
+            target_power: 0.80,
+            n_per_arm: Some(n_per_arm),
+            n_total: None,
+            allocation: balanced_allocation(),
+            dropout: DropoutConfig {
+                control_dropout_rate: 0.05,
+                experimental_dropout_rate: 0.05,
+                inflate_for_dropout: true
+            },
+            group_sequential: fixed_design(),
+            multiplicity_adjustment: MultipleComparisonMethod::None,
+            computation_mode: ComputationMode::Full,
+            curve_n_min: 50,
+            curve_n_max: 1000,
+            curve_n_step: 50,
+            propagate_uncertainty: false,
+            uncertainty_samples: 1000,
+            power_ci_level: 0.95,
+            clinical_thresholds: None
+        }
+    }
+
+    /// Adaptive platform trial (multiple arms, interim)
+    fn platform_trial(
+        control_id: String,
+        experimental_ids: List<String>,
+        n_per_arm: Int
+    ) -> TrialPowerConfig {
+        TrialPowerConfig {
+            control_guideline_id: control_id,
+            experimental_guideline_ids: experimental_ids,
+            endpoint: EndpointType::BinaryResponse,
+            test_type: TestType::TwoSidedSuperiority,
+            alpha: 0.05,
+            target_power: 0.80,
+            n_per_arm: Some(n_per_arm),
+            n_total: None,
+            allocation: unbalanced_allocation(2.0),  // 2:1 randomization
+            dropout: default_dropout(),
+            group_sequential: gs_1interim_futility(),
+            multiplicity_adjustment: MultipleComparisonMethod::Dunnett,
+            computation_mode: ComputationMode::Full,
+            curve_n_min: 30,
+            curve_n_max: 300,
+            curve_n_step: 15,
+            propagate_uncertainty: true,
+            uncertainty_samples: 1000,
+            power_ci_level: 0.95,
+            clinical_thresholds: Some(default_thresholds())
+        }
+    }
+}
+
+// ============================================================================
+// EXAMPLE USAGE
+// ============================================================================
+//
+// // Simple power calculation
+// let power = quick_power(0.50, 0.65, 100, 0.05, true)
+// // power ~ 0.64
+//
+// // Required sample size for 80% power
+// let n = quick_sample_size(0.50, 0.65, 0.05, 0.80, true)
+// // n ~ 121 per arm
+//
+// // Full trial power analysis
+// let config = superiority_trial(
+//     "standard_care",
+//     ["new_regimen_a", "new_regimen_b"],
+//     EndpointType::BinaryResponse,
+//     150
+// )
+// let result = compute_trial_power(robustness_scores, config)
+//
+// // Get regulatory documentation
+// let sap_text = power_sap_section(result)
+// let latex_table = power_table_latex(result)
+// let markdown = power_summary_markdown(result)
+//
+// // Use presets for specific trial types
+// let phase3_config = presets::phase3_confirmatory("control", ["exp_a"], 200)
+// let phase3_result = compute_trial_power(scores, phase3_config)
+//
+// // Non-inferiority with 10% margin
+// let ni_config = noninferiority_trial("reference", ["biosimilar"], EndpointType::BinaryResponse, 300, 0.10)

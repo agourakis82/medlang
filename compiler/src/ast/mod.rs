@@ -37,11 +37,17 @@ pub mod core_lang;
 pub mod enum_decl;
 pub mod evidence;
 pub mod module;
+pub mod phase_v1; // Phase V1: Effect System, Epistemic Computing, Refinements
 
 pub use contracts::{
     AssertStmt, ContractClause, ContractKind, ContractViolation, FnContract, InvariantBlock,
 };
 pub use enum_decl::{EnumDecl, EnumVariant};
+pub use phase_v1::{
+    ComparisonOp as ConstraintComparisonOp, ConstraintExpr, ConstraintLiteral, EffectAnnotationAst,
+    EpistemicTypeAst, EpistemicValueAst, LogicalOp as ConstraintLogicalOp, ProvenanceAst,
+    RefinementConstraintAst, TypeExprV1,
+};
 
 pub use evidence::{
     DesignDecl, DesignGridSpec, EvidenceBody, EvidenceProgram, HierarchyDecl, HierarchyKind,

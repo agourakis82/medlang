@@ -1,0 +1,200 @@
+// Week 38: Dose Guideline IR and Bridge to GuidelineArtifact
+//
+// Provides a simpler, more focused IR for dose adjustment guidelines extracted
+// from RL policies, plus bridging to the generic GuidelineArtifact format.
+
+module med.rl.dose_guideline;
+
+import med.rl::{RLEnvConfig};
+import med.rl.explain::{DistilledPolicy};
+import med.rl.guideline::{GuidelineArtifact, DoseGuidelineMeta};
+
+/// Comparison operators for atomic conditions
+enum ComparisonOp {
+  /// Less than (<)
+  LT;
+
+  /// Less than or equal (<=)
+  LE;
+
+  /// Greater than (>)
+  GT;
+
+  /// Greater than or equal (>=)
+  GE;
+}
+
+/// An atomic condition on a single feature
+///
+/// Represents a simple comparison like "ANC <= 0.5" or "cycle > 2"
+type AtomicCondition = {
+  /// Feature name (e.g., "ANC", "tumour_ratio", "prev_dose", "cycle")
+  feature: String;
+
+  /// Comparison operator
+  op: ComparisonOp;
+
+  /// Threshold value
+  threshold: Float;
+};
+
+/// A single dose rule: IF conditions THEN dose action
+///
+/// Represents an explicit IF/THEN rule like:
+/// "IF ANC <= 0.5 AND cycle > 2 THEN set_dose(100 mg)"
+type DoseRule = {
+  /// Conjunction of atomic conditions (all must be satisfied)
+  conditions: Vector<AtomicCondition>;
+
+  /// Action index (index into dose_levels array)
+  action_index: Int;
+
+  /// Actual dose amount in mg (derived from dose_levels[action_index])
+  action_dose_mg: Float;
+};
+
+/// Complete dose guideline with explicit IF/THEN rules
+///
+/// This is a simpler, more focused representation than GuidelineArtifact,
+/// specifically designed for dose adjustment rules extracted from RL policies.
+type DoseGuidelineIR = {
+  /// Guideline name
+  name: String;
+
+  /// Description
+  description: String;
+
+  /// Feature names in order (e.g., ["ANC", "tumour_ratio", "prev_dose", "cycle"])
+  feature_names: Vector<String>;
+
+  /// Dose levels in mg (indexed by action_index in rules)
+  dose_levels_mg: Vector<Float>;
+
+  /// List of dose rules (evaluated in order, first match wins)
+  rules: Vector<DoseRule>;
+};
+
+export enum ComparisonOp;
+export type AtomicCondition;
+export type DoseRule;
+export type DoseGuidelineIR;
+
+/// Transform a distilled RL policy into a DoseGuidelineIR
+///
+/// This extracts explicit IF/THEN dose rules from the distilled policy tree,
+/// producing a simpler representation focused on dose adjustment logic.
+///
+/// ## Example Usage
+///
+/// ```medlang
+/// // After training and distilling:
+/// let guideline_ir: DoseGuidelineIR = guideline_from_distilled_policy(
+///   env_cfg,
+///   distilled_policy,
+///   "NSCLC Phase 2 RL Guideline",
+///   "Dose adjustment rules derived from RL policy on QSP model"
+/// );
+///
+/// // Pretty-print for review:
+/// let text: String = pretty_print_dose_guideline(guideline_ir);
+/// print(text);
+/// ```
+///
+/// ## Output Structure
+///
+/// The DoseGuidelineIR contains:
+/// - Feature names extracted from the tree
+/// - Dose levels from RLEnvConfig
+/// - Rules extracted from tree paths (root-to-leaf)
+///
+/// Each rule has:
+/// - Conditions: conjunctions of feature constraints
+/// - Action index: which dose level to use
+/// - Dose amount: actual mg value
+///
+fn guideline_from_distilled_policy(
+  env_cfg: RLEnvConfig;
+  policy: DistilledPolicy;
+  name: String;
+  description: String;
+) -> DoseGuidelineIR;
+
+/// Pretty-print a dose guideline to human-readable text
+///
+/// Generates a formatted text representation showing:
+/// - Guideline metadata (name, description, features, dose levels)
+/// - All rules in IF/THEN format
+/// - Conditions with feature names and thresholds
+/// - Actions with dose amounts
+///
+/// ## Example Output
+///
+/// ```
+/// Dose Guideline: NSCLC Phase 2 RL Guideline
+/// Description: Dose adjustment rules derived from RL policy
+/// Features: ANC, tumour_ratio, prev_dose, cycle
+/// Dose Levels: [0.0, 50.0, 100.0, 200.0, 300.0] mg
+///
+/// Rules (8 total):
+/// ================================================================================
+///
+/// Rule #1:
+///   IF:
+///     - ANC <= 0.5
+///     - cycle > 2.0
+///   THEN: Set dose to 0 mg (action index 0)
+///
+/// Rule #2:
+///   IF:
+///     - ANC > 0.5
+///     - ANC <= 0.8
+///     - tumour_ratio > 0.7
+///   THEN: Set dose to 100 mg (action index 2)
+/// ...
+/// ```
+///
+fn pretty_print_dose_guideline(gl: DoseGuidelineIR) -> String;
+
+/// Bridge a DoseGuidelineIR into a general GuidelineArtifact
+///
+/// This converts the simpler DoseGuidelineIR format into the more general
+/// GuidelineArtifact format that can be exported to CQL and other clinical
+/// decision support formats.
+///
+/// ## Transformation
+///
+/// - Each DoseRule becomes a GuidelineRule
+/// - AtomicConditions become GuidelineExpr comparisons
+/// - Dose actions become DoseAction(SetAbsoluteDoseMg or HoldDose)
+/// - Metadata is enriched with clinical context
+///
+/// ## Example Usage
+///
+/// ```medlang
+/// let gl_ir: DoseGuidelineIR = guideline_from_distilled_policy(...);
+///
+/// let meta: DoseGuidelineMeta = {
+///   id = "NSCLC-Phase2-RL-001";
+///   version = "1.0.0";
+///   title = "NSCLC Phase 2 RL-derived dose guideline";
+///   description = "Dose adjustments derived from RL policy";
+///   population = "Adult NSCLC, 2L, ECOG 0-1";
+/// };
+///
+/// let artifact: GuidelineArtifact = dose_guideline_to_guideline(gl_ir, meta);
+/// ```
+///
+/// The resulting GuidelineArtifact can be:
+/// - Exported to CQL for FHIR integration
+/// - Compared to standard-of-care guidelines
+/// - Validated by clinicians
+/// - Integrated into EHR systems
+///
+fn dose_guideline_to_guideline(
+  gl: DoseGuidelineIR;
+  meta: DoseGuidelineMeta;
+) -> GuidelineArtifact;
+
+export fn guideline_from_distilled_policy;
+export fn pretty_print_dose_guideline;
+export fn dose_guideline_to_guideline;

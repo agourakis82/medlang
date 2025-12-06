@@ -1,0 +1,356 @@
+// Week 53: MedLang Standard Library - Core Traits
+//
+// This module defines the core traits (typeclasses) for MedLang.
+// These traits enable bounded polymorphism and ad-hoc polymorphism.
+
+// =============================================================================
+// CORE ALGEBRAIC TRAITS
+// =============================================================================
+
+/// Numeric types with basic arithmetic
+/// Implemented by: Int, Float, Dual, DualVec
+trait Numeric<T> {
+    fn zero() -> T;
+    fn one() -> T;
+    fn add(x: T, y: T) -> T;
+    fn sub(x: T, y: T) -> T;
+    fn mul(x: T, y: T) -> T;
+    fn neg(x: T) -> T;
+}
+
+/// Division (separate because not all numerics support it)
+/// Implemented by: Float, Dual, DualVec
+trait Fractional<T>: Numeric<T> {
+    fn div(x: T, y: T) -> T;
+    fn recip(x: T) -> T { Fractional::div(Numeric::one(), x) }
+}
+
+/// Real numbers with transcendental functions
+/// Implemented by: Float, Dual, DualVec
+trait Real<T>: Fractional<T> {
+    fn sqrt(x: T) -> T;
+    fn exp(x: T) -> T;
+    fn log(x: T) -> T;
+    fn sin(x: T) -> T;
+    fn cos(x: T) -> T;
+    fn tan(x: T) -> T { Real::div(Real::sin(x), Real::cos(x)) }
+    fn pow(x: T, y: T) -> T;
+    fn abs(x: T) -> T;
+}
+
+// =============================================================================
+// COMPARISON TRAITS
+// =============================================================================
+
+/// Equality comparison
+/// Implemented by: all types
+trait Eq<T> {
+    fn eq(x: T, y: T) -> Bool;
+    fn ne(x: T, y: T) -> Bool { !Eq::eq(x, y) }
+}
+
+/// Ordering comparison
+/// Implemented by: Int, Float, String
+trait Ord<T>: Eq<T> {
+    fn lt(x: T, y: T) -> Bool;
+    fn le(x: T, y: T) -> Bool { Ord::lt(x, y) || Eq::eq(x, y) }
+    fn gt(x: T, y: T) -> Bool { Ord::lt(y, x) }
+    fn ge(x: T, y: T) -> Bool { Ord::le(y, x) }
+    fn min(x: T, y: T) -> T { if Ord::lt(x, y) { x } else { y } }
+    fn max(x: T, y: T) -> T { if Ord::gt(x, y) { x } else { y } }
+    fn clamp(x: T, lo: T, hi: T) -> T { Ord::min(Ord::max(x, lo), hi) }
+}
+
+// =============================================================================
+// AUTOMATIC DIFFERENTIATION TRAITS
+// =============================================================================
+
+/// Types that support automatic differentiation
+/// Implemented by: Float, Dual, DualVec, DualRec
+trait Diffable<T> {
+    /// Create a dual number from value (as variable to differentiate)
+    fn var(x: T) -> Dual;
+
+    /// Create a dual number from value (as constant)
+    fn const_(x: T) -> Dual;
+
+    /// Extract primal value
+    fn primal(d: Dual) -> T;
+
+    /// Extract derivative (tangent)
+    fn tangent(d: Dual) -> T;
+}
+
+/// Vector differentiation
+trait VecDiffable<T> {
+    /// Create seeded dual vector for computing gradient
+    fn seed_at(xs: [T], i: Int) -> [Dual];
+
+    /// Extract primal vector
+    fn primal_vec(ds: [Dual]) -> [T];
+
+    /// Extract tangent vector
+    fn tangent_vec(ds: [Dual]) -> [T];
+}
+
+// =============================================================================
+// COLLECTION TRAITS
+// =============================================================================
+
+/// Types that can be mapped over (Functor)
+trait Mappable<F> {
+    fn map<A, B>(f: (A) -> B, fa: F<A>) -> F<B>;
+}
+
+/// Types that can be folded/reduced
+trait Foldable<F> {
+    fn fold<A, B>(f: (B, A) -> B, init: B, fa: F<A>) -> B;
+    fn length<A>(fa: F<A>) -> Int;
+    fn isEmpty<A>(fa: F<A>) -> Bool { Foldable::length(fa) == 0 }
+}
+
+/// Types that can be filtered
+trait Filterable<F> {
+    fn filter<A>(pred: (A) -> Bool, fa: F<A>) -> F<A>;
+}
+
+/// Monoid: types with an identity and associative operation
+trait Monoid<T> {
+    fn empty() -> T;
+    fn concat(x: T, y: T) -> T;
+}
+
+// =============================================================================
+// CONVERSION TRAITS
+// =============================================================================
+
+/// Convert to String
+trait Show<T> {
+    fn show(x: T) -> String;
+}
+
+/// Parse from String
+trait Read<T> {
+    fn read(s: String) -> Option<T>;
+}
+
+/// Convert from one type to another
+trait From<T, U> {
+    fn from(x: T) -> U;
+}
+
+/// Convert to another type (inverse of From)
+trait Into<T, U> {
+    fn into(x: T) -> U;
+}
+
+// =============================================================================
+// DEFAULT AND CLONE TRAITS
+// =============================================================================
+
+/// Types with a default value
+trait Default<T> {
+    fn default() -> T;
+}
+
+/// Types that can be copied/cloned
+trait Clone<T> {
+    fn clone(x: T) -> T;
+}
+
+// =============================================================================
+// IMPLEMENTATIONS FOR PRIMITIVES
+// =============================================================================
+
+// --- Numeric<Int> ---
+impl Numeric<Int> {
+    fn zero() -> Int { 0 }
+    fn one() -> Int { 1 }
+    fn add(x: Int, y: Int) -> Int { x + y }
+    fn sub(x: Int, y: Int) -> Int { x - y }
+    fn mul(x: Int, y: Int) -> Int { x * y }
+    fn neg(x: Int) -> Int { -x }
+}
+
+// --- Numeric<Float> ---
+impl Numeric<Float> {
+    fn zero() -> Float { 0.0 }
+    fn one() -> Float { 1.0 }
+    fn add(x: Float, y: Float) -> Float { x + y }
+    fn sub(x: Float, y: Float) -> Float { x - y }
+    fn mul(x: Float, y: Float) -> Float { x * y }
+    fn neg(x: Float) -> Float { -x }
+}
+
+// --- Fractional<Float> ---
+impl Fractional<Float> {
+    fn div(x: Float, y: Float) -> Float { x / y }
+    fn recip(x: Float) -> Float { 1.0 / x }
+}
+
+// --- Real<Float> ---
+impl Real<Float> {
+    fn sqrt(x: Float) -> Float { __builtin_sqrt(x) }
+    fn exp(x: Float) -> Float { __builtin_exp(x) }
+    fn log(x: Float) -> Float { __builtin_log(x) }
+    fn sin(x: Float) -> Float { __builtin_sin(x) }
+    fn cos(x: Float) -> Float { __builtin_cos(x) }
+    fn tan(x: Float) -> Float { __builtin_tan(x) }
+    fn pow(x: Float, y: Float) -> Float { __builtin_pow(x, y) }
+    fn abs(x: Float) -> Float { __builtin_abs(x) }
+}
+
+// --- Eq implementations ---
+impl Eq<Int> {
+    fn eq(x: Int, y: Int) -> Bool { x == y }
+}
+
+impl Eq<Float> {
+    fn eq(x: Float, y: Float) -> Bool { x == y }
+}
+
+impl Eq<Bool> {
+    fn eq(x: Bool, y: Bool) -> Bool { x == y }
+}
+
+impl Eq<String> {
+    fn eq(x: String, y: String) -> Bool { x == y }
+}
+
+// --- Ord implementations ---
+impl Ord<Int> {
+    fn lt(x: Int, y: Int) -> Bool { x < y }
+}
+
+impl Ord<Float> {
+    fn lt(x: Float, y: Float) -> Bool { x < y }
+}
+
+impl Ord<String> {
+    fn lt(x: String, y: String) -> Bool { x < y }
+}
+
+// --- Diffable<Float> ---
+impl Diffable<Float> {
+    fn var(x: Float) -> Dual { __builtin_dual_var(x) }
+    fn const_(x: Float) -> Dual { __builtin_dual_const(x) }
+    fn primal(d: Dual) -> Float { __builtin_dual_primal(d) }
+    fn tangent(d: Dual) -> Float { __builtin_dual_tangent(d) }
+}
+
+// --- Numeric<Dual> (chain rule applied automatically) ---
+impl Numeric<Dual> {
+    fn zero() -> Dual { Diffable::const_(0.0) }
+    fn one() -> Dual { Diffable::const_(1.0) }
+    fn add(x: Dual, y: Dual) -> Dual { __builtin_dual_add(x, y) }
+    fn sub(x: Dual, y: Dual) -> Dual { __builtin_dual_sub(x, y) }
+    fn mul(x: Dual, y: Dual) -> Dual { __builtin_dual_mul(x, y) }
+    fn neg(x: Dual) -> Dual { __builtin_dual_neg(x) }
+}
+
+impl Fractional<Dual> {
+    fn div(x: Dual, y: Dual) -> Dual { __builtin_dual_div(x, y) }
+    fn recip(x: Dual) -> Dual { __builtin_dual_recip(x) }
+}
+
+impl Real<Dual> {
+    fn sqrt(x: Dual) -> Dual { __builtin_dual_sqrt(x) }
+    fn exp(x: Dual) -> Dual { __builtin_dual_exp(x) }
+    fn log(x: Dual) -> Dual { __builtin_dual_log(x) }
+    fn sin(x: Dual) -> Dual { __builtin_dual_sin(x) }
+    fn cos(x: Dual) -> Dual { __builtin_dual_cos(x) }
+    fn tan(x: Dual) -> Dual { __builtin_dual_tan(x) }
+    fn pow(x: Dual, y: Dual) -> Dual { __builtin_dual_pow(x, y) }
+    fn abs(x: Dual) -> Dual { __builtin_dual_abs(x) }
+}
+
+// --- Default implementations ---
+impl Default<Int> {
+    fn default() -> Int { 0 }
+}
+
+impl Default<Float> {
+    fn default() -> Float { 0.0 }
+}
+
+impl Default<Bool> {
+    fn default() -> Bool { false }
+}
+
+impl Default<String> {
+    fn default() -> String { "" }
+}
+
+// --- Show implementations ---
+impl Show<Int> {
+    fn show(x: Int) -> String { __builtin_int_to_string(x) }
+}
+
+impl Show<Float> {
+    fn show(x: Float) -> String { __builtin_float_to_string(x) }
+}
+
+impl Show<Bool> {
+    fn show(x: Bool) -> String { if x { "true" } else { "false" } }
+}
+
+// --- Monoid implementations ---
+impl Monoid<String> {
+    fn empty() -> String { "" }
+    fn concat(x: String, y: String) -> String { x + y }
+}
+
+impl<T> Monoid<[T]> {
+    fn empty() -> [T] { [] }
+    fn concat(x: [T], y: [T]) -> [T] { __builtin_list_concat(x, y) }
+}
+
+// =============================================================================
+// MEDICAL/SCIENTIFIC DOMAIN TRAITS
+// =============================================================================
+
+/// Types with physical units (compile-time dimensional analysis)
+trait Measure<T, Unit> {
+    fn value(x: T) -> Float;
+    fn from_value(v: Float) -> T;
+    fn unit_string() -> String;
+}
+
+/// Pharmacokinetic parameter traits
+trait PKParam<T> {
+    fn name() -> String;
+    fn units() -> String;
+    fn typical_range() -> (Float, Float);
+    fn is_valid(value: Float) -> Bool;
+}
+
+/// Observable quantities
+trait Observable<T> {
+    fn observe(state: T, time: Float) -> Float;
+    fn measurement_error() -> Float;
+}
+
+/// ODE system (for compartmental models)
+trait ODESystem<State, Params> {
+    fn initial(params: Params, dose: Float) -> State;
+    fn derivative(state: State, params: Params, time: Float) -> State;
+}
+
+/// Bayesian prior distributions
+trait HasPrior<T> {
+    fn prior_mean() -> T;
+    fn prior_sd() -> T;
+    fn log_prior(x: T) -> Float;
+}
+
+// =============================================================================
+// EXPORTS
+// =============================================================================
+
+export trait Numeric, Fractional, Real;
+export trait Eq, Ord;
+export trait Diffable, VecDiffable;
+export trait Mappable, Foldable, Filterable, Monoid;
+export trait Show, Read, From, Into;
+export trait Default, Clone;
+export trait Measure, PKParam, Observable, ODESystem, HasPrior;

@@ -1,0 +1,602 @@
+// Week 50-51: Automatic Differentiation Standard Library
+//
+// This module provides comprehensive automatic differentiation utilities for MedLang.
+// AD enables efficient computation of derivatives for optimization,
+// sensitivity analysis, and machine learning applications.
+//
+// Features:
+// - Forward-mode AD using dual numbers
+// - 45+ differentiable operations
+// - Vector/matrix operations with gradients
+// - Gradient, Jacobian, and Hessian computation
+// - Gradient checking utilities
+// - Smooth approximations for non-differentiable functions
+// - ML activation functions
+// - PK/PD model functions
+
+module med.core.ad;
+
+// =============================================================================
+// CORE TYPES
+// =============================================================================
+
+/// Dual number for automatic differentiation
+/// Represents value + derivative: f(x) and f'(x)
+type Dual = {
+    primal: Float;   // The value f(x)
+    tangent: Float;  // The derivative f'(x)
+};
+
+/// Vector of dual numbers for multi-variable gradients
+type DualVector = [Dual];
+
+/// Named parameter gradients for structured differentiation
+type DualRecord = { [String]: Dual };
+
+// =============================================================================
+// DUAL NUMBER CONSTRUCTORS
+// =============================================================================
+
+/// Create a constant dual number (tangent = 0)
+/// Use for values that are not being differentiated.
+fn constant(value: Float) -> Dual {
+    __builtin_dual_constant(value)
+}
+
+/// Create a variable dual number (tangent = 1)
+/// Use to mark the variable you're differentiating with respect to.
+fn variable(value: Float) -> Dual {
+    __builtin_dual_variable(value)
+}
+
+/// Create a seeded dual number with custom tangent
+/// Use for directional derivatives.
+fn seeded(value: Float, seed: Float) -> Dual {
+    __builtin_dual_seeded(value, seed)
+}
+
+// =============================================================================
+// GRADIENT FUNCTIONS
+// =============================================================================
+
+/// Compute gradient of scalar function f: R -> R at x
+///
+/// Example:
+///   let f = |x| x * x;
+///   grad(f, 3.0)  // returns 6.0 (d/dx x^2 = 2x)
+fn grad(f: Float -> Float, x: Float) -> Float {
+    __builtin_grad(f, x)
+}
+
+/// Compute gradient of multi-variable function f: R^n -> R
+///
+/// Example:
+///   let f = |v| v[0]^2 + v[1]^2;
+///   grad_n(f, [3.0, 4.0])  // returns [6.0, 8.0]
+fn grad_vec(f: [Float] -> Float, x: [Float]) -> [Float] {
+    __builtin_grad_vec(f, x)
+}
+
+/// Compute both value and gradient at x
+///
+/// More efficient than calling f(x) and grad(f, x) separately
+///
+/// Example:
+///   let f = |x| x * x;
+///   let (val, g) = value_and_grad(f, 3.0);
+///   // val = 9.0, g = 6.0
+fn value_and_grad(f: Float -> Float, x: Float) -> (Float, Float) {
+    __builtin_value_and_grad(f, x)
+}
+
+/// Compute second derivative
+///
+/// Example:
+///   let f = |x| x * x * x;  // f(x) = x^3
+///   grad2(f, 2.0)  // returns 12.0 (d^2/dx^2 x^3 = 6x)
+fn grad2(f: Float -> Float, x: Float) -> Float {
+    __builtin_grad2(f, x)
+}
+
+/// Compute n-th derivative
+///
+/// Example:
+///   let f = |x| x * x * x * x;  // f(x) = x^4
+///   grad_n(f, 1.0, 2)  // returns 12.0 (d^2/dx^2 x^4 = 12x^2)
+fn grad_n(f: Float -> Float, x: Float, n: Int) -> Float {
+    __builtin_grad_n(f, x, n)
+}
+
+/// Compute partial derivative of multi-argument function
+///
+/// Example:
+///   let f = |x, y| x * y + x * x;
+///   partial(f, 0, 3.0, 2.0)  // df/dx at (3, 2) = y + 2x = 2 + 6 = 8
+fn partial(f: (Float, Float) -> Float, arg_index: Int, x: Float, y: Float) -> Float {
+    __builtin_partial(f, arg_index, x, y)
+}
+
+// =============================================================================
+// JACOBIAN AND HESSIAN
+// =============================================================================
+
+/// Compute Jacobian of vector function f: R^n -> R^m
+///
+/// Returns m×n matrix in row-major order.
+///
+/// Example:
+///   let f = |v| [v[0] + v[1], v[0] * v[1]];
+///   jacobian(f, [2.0, 3.0], 2)  // [[1, 1], [3, 2]]
+fn jacobian(f: [Float] -> [Float], x: [Float], output_dim: Int) -> [[Float]] {
+    __builtin_jacobian(f, x, output_dim)
+}
+
+/// Compute Hessian of scalar function f: R^n -> R
+///
+/// Returns n×n symmetric matrix.
+///
+/// Example:
+///   let f = |v| v[0]^2 + v[1]^2;
+///   hessian(f, [1.0, 1.0])  // [[2, 0], [0, 2]]
+fn hessian(f: [Float] -> Float, x: [Float]) -> [[Float]] {
+    __builtin_hessian(f, x)
+}
+
+/// Compute Laplacian (trace of Hessian): Δf = Σ ∂²f/∂xᵢ²
+fn laplacian(f: [Float] -> Float, x: [Float]) -> Float {
+    __builtin_laplacian(f, x)
+}
+
+// =============================================================================
+// JVP AND VJP
+// =============================================================================
+
+/// Jacobian-vector product: J @ v
+///
+/// Computed efficiently in single forward pass.
+/// For f: R^n -> R^m and vector v, returns J(x) @ v.
+fn jvp(f: [Float] -> [Float], x: [Float], v: [Float]) -> [Float] {
+    __builtin_jvp(f, x, v)
+}
+
+/// Directional derivative: ∇f · v
+///
+/// Derivative of scalar function in direction v.
+fn directional_derivative(f: [Float] -> Float, x: [Float], v: [Float]) -> Float {
+    __builtin_directional_derivative(f, x, v)
+}
+
+/// Prepare for vector-Jacobian product (for reverse-mode simulation)
+///
+/// Returns a function that computes J^T @ cotangent.
+fn vjp_prepare(f: [Float] -> [Float], x: [Float], output_dim: Int) -> ([Float] -> [Float]) {
+    __builtin_vjp_prepare(f, x, output_dim)
+}
+
+// =============================================================================
+// GRADIENT CHECKING
+// =============================================================================
+
+/// Verify gradient using finite differences
+///
+/// Returns a record with:
+///   - ad_grad: gradient computed via AD
+///   - fd_grad: gradient computed via finite differences
+///   - relative_error: |ad - fd| / max(|ad|, |fd|)
+///   - passed: true if relative_error < 1e-4
+///
+/// Example:
+///   let f = |x| sin(x);
+///   let result = check_grad(f, 0.5);
+///   assert(result.passed);
+fn check_grad(f: Float -> Float, x: Float) -> {
+    ad_grad: Float;
+    fd_grad: Float;
+    relative_error: Float;
+    passed: Bool;
+} {
+    __builtin_check_grad(f, x)
+}
+
+/// Comprehensive gradient check over a range
+///
+/// Example:
+///   let f = |x| exp(x);
+///   let result = check_grad_range(f, -2.0, 2.0, 10);
+///   assert(result.all_passed);
+fn check_grad_range(
+    f: Float -> Float,
+    x_min: Float,
+    x_max: Float,
+    n_points: Int
+) -> {
+    n_points: Int;
+    n_passed: Int;
+    max_relative_error: Float;
+    all_passed: Bool;
+    failure_points: String;
+} {
+    __builtin_check_grad_range(f, x_min, x_max, n_points)
+}
+
+/// Check vector gradient
+fn check_grad_vec(f: [Float] -> Float, x: [Float]) -> {
+    passed: Bool;
+    max_relative_error: Float;
+    computed_gradient: [Float];
+    numerical_gradient: [Float];
+} {
+    __builtin_check_grad_vec(f, x)
+}
+
+// =============================================================================
+// SMOOTH APPROXIMATIONS (for differentiability)
+// =============================================================================
+
+/// Smooth approximation to abs: sqrt(x^2 + epsilon)
+///
+/// Unlike |x|, this is differentiable everywhere including x=0.
+/// As epsilon -> 0, approaches true absolute value.
+fn smooth_abs(x: Float, epsilon: Float) -> Float {
+    sqrt(x * x + epsilon)
+}
+
+/// Smooth sign function: tanh(x / epsilon)
+fn smooth_sign(x: Float, epsilon: Float) -> Float {
+    tanh(x / epsilon)
+}
+
+/// Smooth min (softmin)
+///
+/// A differentiable approximation to min(a, b).
+/// Temperature controls sharpness: smaller = sharper.
+fn smooth_min(a: Float, b: Float, temperature: Float) -> Float {
+    let t = temperature;
+    -t * log(exp(-a / t) + exp(-b / t))
+}
+
+/// Smooth max (softmax)
+///
+/// A differentiable approximation to max(a, b).
+fn smooth_max(a: Float, b: Float, temperature: Float) -> Float {
+    let t = temperature;
+    t * log(exp(a / t) + exp(b / t))
+}
+
+/// Smooth clamp
+fn smooth_clamp(x: Float, min_val: Float, max_val: Float, sharpness: Float) -> Float {
+    smooth_max(smooth_min(x, max_val, 1.0/sharpness), min_val, 1.0/sharpness)
+}
+
+/// Smooth indicator function (sigmoid-based)
+///
+/// Returns ~1 if x > threshold, ~0 otherwise.
+fn smooth_indicator_gt(x: Float, threshold: Float, sharpness: Float) -> Float {
+    sigmoid(sharpness * (x - threshold))
+}
+
+/// Smooth indicator for x < threshold
+fn smooth_indicator_lt(x: Float, threshold: Float, sharpness: Float) -> Float {
+    sigmoid(sharpness * (threshold - x))
+}
+
+/// Smooth Heaviside step function
+fn smooth_heaviside(x: Float, sharpness: Float) -> Float {
+    sigmoid(sharpness * x)
+}
+
+// =============================================================================
+// ACTIVATION FUNCTIONS
+// =============================================================================
+
+/// Sigmoid: 1 / (1 + exp(-x))
+fn sigmoid(x: Float) -> Float {
+    1.0 / (1.0 + exp(-x))
+}
+
+/// ReLU: max(0, x) - Note: not differentiable at x=0
+fn relu(x: Float) -> Float {
+    if x > 0.0 { x } else { 0.0 }
+}
+
+/// Smooth ReLU using softplus
+fn relu_smooth(x: Float, beta: Float) -> Float {
+    softplus(beta * x) / beta
+}
+
+/// Leaky ReLU: max(alpha*x, x)
+fn leaky_relu(x: Float, alpha: Float) -> Float {
+    if x >= 0.0 { x } else { alpha * x }
+}
+
+/// ELU: Exponential Linear Unit
+fn elu(x: Float, alpha: Float) -> Float {
+    if x >= 0.0 { x } else { alpha * (exp(x) - 1.0) }
+}
+
+/// GELU: Gaussian Error Linear Unit
+fn gelu(x: Float) -> Float {
+    x * sigmoid(1.702 * x)
+}
+
+/// Softplus: log(1 + exp(x))
+fn softplus(x: Float) -> Float {
+    log(1.0 + exp(x))
+}
+
+/// Swish/SiLU: x * sigmoid(x)
+fn swish(x: Float) -> Float {
+    x * sigmoid(x)
+}
+
+/// Mish: x * tanh(softplus(x))
+fn mish(x: Float) -> Float {
+    x * tanh(softplus(x))
+}
+
+/// Hyperbolic tangent
+fn tanh(x: Float) -> Float {
+    let e_pos = exp(x);
+    let e_neg = exp(-x);
+    (e_pos - e_neg) / (e_pos + e_neg)
+}
+
+// =============================================================================
+// MATHEMATICAL FUNCTIONS
+// =============================================================================
+
+// Basic
+fn exp(x: Float) -> Float { __builtin_exp(x) }
+fn exp2(x: Float) -> Float { __builtin_exp2(x) }
+fn log(x: Float) -> Float { __builtin_log(x) }
+fn log2(x: Float) -> Float { __builtin_log2(x) }
+fn log10(x: Float) -> Float { __builtin_log10(x) }
+fn sqrt(x: Float) -> Float { __builtin_sqrt(x) }
+fn cbrt(x: Float) -> Float { __builtin_cbrt(x) }
+fn pow(base: Float, exponent: Float) -> Float { __builtin_pow(base, exponent) }
+
+// Trigonometric
+fn sin(x: Float) -> Float { __builtin_sin(x) }
+fn cos(x: Float) -> Float { __builtin_cos(x) }
+fn tan(x: Float) -> Float { __builtin_tan(x) }
+fn asin(x: Float) -> Float { __builtin_asin(x) }
+fn acos(x: Float) -> Float { __builtin_acos(x) }
+fn atan(x: Float) -> Float { __builtin_atan(x) }
+fn atan2(y: Float, x: Float) -> Float { __builtin_atan2(y, x) }
+
+// Hyperbolic
+fn sinh(x: Float) -> Float { __builtin_sinh(x) }
+fn cosh(x: Float) -> Float { __builtin_cosh(x) }
+fn asinh(x: Float) -> Float { __builtin_asinh(x) }
+fn acosh(x: Float) -> Float { __builtin_acosh(x) }
+fn atanh(x: Float) -> Float { __builtin_atanh(x) }
+
+// Special
+fn erf(x: Float) -> Float { __builtin_erf(x) }
+fn gaussian_pdf(x: Float) -> Float { __builtin_gaussian_pdf(x) }
+
+// =============================================================================
+// PK/PD FUNCTIONS
+// =============================================================================
+
+/// Hill function: x^n / (K^n + x^n)
+/// Used for saturation kinetics in pharmacology.
+fn hill(x: Float, k: Float, n: Float) -> Float {
+    let x_n = pow(x, n);
+    let k_n = pow(k, n);
+    x_n / (x_n + k_n)
+}
+
+/// Emax model: E0 + Emax·C^n / (EC50^n + C^n)
+fn emax(concentration: Float, e0: Float, emax_val: Float, ec50: Float, n: Float) -> Float {
+    e0 + emax_val * hill(concentration, ec50, n)
+}
+
+/// Michaelis-Menten kinetics: Vmax·S / (Km + S)
+fn michaelis_menten(substrate: Float, vmax: Float, km: Float) -> Float {
+    vmax * substrate / (km + substrate)
+}
+
+/// First-order elimination: C(t) = C0·e^(-k·t)
+fn first_order_elimination(c0: Float, k: Float, t: Float) -> Float {
+    c0 * exp(-k * t)
+}
+
+// =============================================================================
+// VECTOR OPERATIONS
+// =============================================================================
+
+/// Dot product
+fn dot(a: [Float], b: [Float]) -> Float {
+    __builtin_dot(a, b)
+}
+
+/// L2 norm (Euclidean)
+fn norm_l2(v: [Float]) -> Float {
+    __builtin_norm_l2(v)
+}
+
+/// L1 norm (Manhattan)
+fn norm_l1(v: [Float]) -> Float {
+    __builtin_norm_l1(v)
+}
+
+/// Normalize vector to unit length
+fn normalize(v: [Float]) -> [Float] {
+    __builtin_normalize(v)
+}
+
+/// Softmax: exp(x[i]) / sum(exp(x))
+fn softmax(v: [Float]) -> [Float] {
+    __builtin_softmax(v)
+}
+
+/// Log-softmax (numerically stable)
+fn log_softmax(v: [Float]) -> [Float] {
+    __builtin_log_softmax(v)
+}
+
+// =============================================================================
+// LOSS FUNCTIONS
+// =============================================================================
+
+/// Mean squared error: (1/n)Σ(y - ŷ)²
+fn mse_loss(y_true: [Float], y_pred: [Float]) -> Float {
+    __builtin_mse_loss(y_true, y_pred)
+}
+
+/// Mean absolute error: (1/n)Σ|y - ŷ|
+fn mae_loss(y_true: [Float], y_pred: [Float]) -> Float {
+    __builtin_mae_loss(y_true, y_pred)
+}
+
+/// Cross-entropy loss for classification
+fn cross_entropy_loss(y_true: [Float], y_pred: [Float]) -> Float {
+    __builtin_cross_entropy_loss(y_true, y_pred)
+}
+
+/// Huber loss: quadratic for small errors, linear for large
+fn huber_loss(y_true: Float, y_pred: Float, delta: Float) -> Float {
+    let error = y_true - y_pred;
+    let abs_error = smooth_abs(error, 1e-10);
+    if abs_error <= delta {
+        0.5 * error * error
+    } else {
+        delta * (abs_error - 0.5 * delta)
+    }
+}
+
+// =============================================================================
+// UTILITY FUNCTIONS
+// =============================================================================
+
+fn abs(x: Float) -> Float {
+    if x >= 0.0 { x } else { -x }
+}
+
+fn sign(x: Float) -> Float {
+    if x > 0.0 { 1.0 }
+    else if x < 0.0 { -1.0 }
+    else { 0.0 }
+}
+
+fn clamp(x: Float, min_val: Float, max_val: Float) -> Float {
+    if x < min_val { min_val }
+    else if x > max_val { max_val }
+    else { x }
+}
+
+fn lerp(t: Float, a: Float, b: Float) -> Float {
+    (1.0 - t) * a + t * b
+}
+
+fn hypot(a: Float, b: Float) -> Float {
+    sqrt(a * a + b * b)
+}
+
+// =============================================================================
+// EXPORTS
+// =============================================================================
+
+export {
+    // Type constructors
+    constant,
+    variable,
+    seeded,
+
+    // Gradient functions
+    grad,
+    grad_vec,
+    value_and_grad,
+    grad2,
+    grad_n,
+    partial,
+
+    // Jacobian/Hessian
+    jacobian,
+    hessian,
+    laplacian,
+
+    // JVP/VJP
+    jvp,
+    directional_derivative,
+    vjp_prepare,
+
+    // Gradient checking
+    check_grad,
+    check_grad_range,
+    check_grad_vec,
+
+    // Smooth approximations
+    smooth_abs,
+    smooth_sign,
+    smooth_min,
+    smooth_max,
+    smooth_clamp,
+    smooth_indicator_gt,
+    smooth_indicator_lt,
+    smooth_heaviside,
+
+    // Activation functions
+    sigmoid,
+    relu,
+    relu_smooth,
+    leaky_relu,
+    elu,
+    gelu,
+    softplus,
+    swish,
+    mish,
+    tanh,
+
+    // Math functions
+    exp,
+    exp2,
+    log,
+    log2,
+    log10,
+    sqrt,
+    cbrt,
+    pow,
+    sin,
+    cos,
+    tan,
+    asin,
+    acos,
+    atan,
+    atan2,
+    sinh,
+    cosh,
+    asinh,
+    acosh,
+    atanh,
+    erf,
+    gaussian_pdf,
+
+    // PK/PD functions
+    hill,
+    emax,
+    michaelis_menten,
+    first_order_elimination,
+
+    // Vector operations
+    dot,
+    norm_l2,
+    norm_l1,
+    normalize,
+    softmax,
+    log_softmax,
+
+    // Loss functions
+    mse_loss,
+    mae_loss,
+    cross_entropy_loss,
+    huber_loss,
+
+    // Utilities
+    abs,
+    sign,
+    clamp,
+    lerp,
+    hypot,
+};

@@ -1,0 +1,247 @@
+// Week 49: Pattern Matching Standard Library
+//
+// This module provides pattern matching utilities and examples for MedLang.
+// Pattern matching enables expressive, type-safe handling of clinical states,
+// treatment responses, and decision logic.
+//
+// Features:
+// - Match on enum variants (Response, ToxicityGrade, ECOG)
+// - OR patterns for grouping related cases
+// - Guards for conditional matching
+// - Exhaustiveness checking at compile time
+
+module med.pattern;
+
+// =============================================================================
+// Clinical Response Enums
+// =============================================================================
+
+// RECIST 1.1 tumor response categories
+enum Response {
+    CR;  // Complete Response
+    PR;  // Partial Response
+    SD;  // Stable Disease
+    PD;  // Progressive Disease
+}
+
+// NCI CTCAE toxicity grades
+enum ToxicityGrade {
+    G0;  // No toxicity
+    G1;  // Mild
+    G2;  // Moderate
+    G3;  // Severe
+    G4;  // Life-threatening
+    G5;  // Death
+}
+
+// ECOG performance status
+enum ECOG {
+    ECOG0;  // Fully active
+    ECOG1;  // Restricted activity
+    ECOG2;  // Ambulatory, capable of self-care
+    ECOG3;  // Limited self-care
+    ECOG4;  // Completely disabled
+}
+
+// Treatment decision
+enum TreatmentDecision {
+    Continue;        // Continue current treatment
+    DoseReduce;      // Reduce dose
+    Hold;            // Temporarily hold treatment
+    Discontinue;     // Permanently discontinue
+    Escalate;        // Escalate dose
+}
+
+// =============================================================================
+// Pattern Matching Examples
+// =============================================================================
+
+// Example 1: Simple response scoring
+// Converts RECIST response to numeric score for analysis
+fn response_score(resp: Response) -> Float {
+    match resp {
+        Response::CR => 1.0,
+        Response::PR => 0.7,
+        Response::SD => 0.3,
+        Response::PD => 0.0,
+    }
+}
+
+// Example 2: OR patterns for responder classification
+// Groups responses into clinically meaningful categories
+fn is_responder(resp: Response) -> Bool {
+    match resp {
+        Response::CR | Response::PR => true,
+        Response::SD | Response::PD => false,
+    }
+}
+
+// Example 3: Clinical benefit rate (CBR)
+// CBR = CR + PR + SD (durable)
+fn clinical_benefit(resp: Response, duration_months: Float) -> Bool {
+    match resp {
+        Response::CR | Response::PR => true,
+        Response::SD if duration_months >= 6.0 => true,
+        _ => false,
+    }
+}
+
+// Example 4: Toxicity-based dose modification
+// Implements standard dose modification guidelines
+fn dose_modification(grade: ToxicityGrade) -> TreatmentDecision {
+    match grade {
+        ToxicityGrade::G0 | ToxicityGrade::G1 => TreatmentDecision::Continue,
+        ToxicityGrade::G2 => TreatmentDecision::DoseReduce,
+        ToxicityGrade::G3 => TreatmentDecision::Hold,
+        ToxicityGrade::G4 | ToxicityGrade::G5 => TreatmentDecision::Discontinue,
+    }
+}
+
+// Example 5: ECOG eligibility check
+// Most trials require ECOG 0-1 or 0-2
+fn ecog_eligible(status: ECOG, max_allowed: Int) -> Bool {
+    match status {
+        ECOG::ECOG0 => true,
+        ECOG::ECOG1 => max_allowed >= 1,
+        ECOG::ECOG2 => max_allowed >= 2,
+        _ => false,
+    }
+}
+
+// Example 6: Complex decision logic with guards
+// Treatment decision based on response and toxicity
+fn treatment_decision(
+    resp: Response,
+    tox: ToxicityGrade,
+    cycles_completed: Int
+) -> TreatmentDecision {
+    // First check toxicity
+    match tox {
+        ToxicityGrade::G4 | ToxicityGrade::G5 => TreatmentDecision::Discontinue,
+        ToxicityGrade::G3 => TreatmentDecision::Hold,
+        _ => {
+            // Then check response
+            match resp {
+                Response::CR if cycles_completed >= 6 => TreatmentDecision::Continue,
+                Response::CR | Response::PR => TreatmentDecision::Continue,
+                Response::SD if cycles_completed < 4 => TreatmentDecision::Continue,
+                Response::SD => TreatmentDecision::DoseReduce,
+                Response::PD => TreatmentDecision::Discontinue,
+            }
+        }
+    }
+}
+
+// Example 7: Objective response rate calculation
+// Maps response to binary ORR indicator
+fn orr_indicator(resp: Response) -> Int {
+    match resp {
+        Response::CR | Response::PR => 1,
+        _ => 0,
+    }
+}
+
+// Example 8: Disease control rate
+// DCR = CR + PR + SD
+fn dcr_indicator(resp: Response) -> Int {
+    match resp {
+        Response::CR | Response::PR | Response::SD => 1,
+        Response::PD => 0,
+    }
+}
+
+// =============================================================================
+// Utility Functions
+// =============================================================================
+
+// Convert response to string for reporting
+fn response_to_string(resp: Response) -> String {
+    match resp {
+        Response::CR => "Complete Response",
+        Response::PR => "Partial Response",
+        Response::SD => "Stable Disease",
+        Response::PD => "Progressive Disease",
+    }
+}
+
+// Convert toxicity grade to numeric value
+fn toxicity_to_int(grade: ToxicityGrade) -> Int {
+    match grade {
+        ToxicityGrade::G0 => 0,
+        ToxicityGrade::G1 => 1,
+        ToxicityGrade::G2 => 2,
+        ToxicityGrade::G3 => 3,
+        ToxicityGrade::G4 => 4,
+        ToxicityGrade::G5 => 5,
+    }
+}
+
+// Check if toxicity is dose-limiting
+fn is_dose_limiting(grade: ToxicityGrade) -> Bool {
+    match grade {
+        ToxicityGrade::G3 | ToxicityGrade::G4 | ToxicityGrade::G5 => true,
+        _ => false,
+    }
+}
+
+// ECOG to numeric score
+fn ecog_score(status: ECOG) -> Int {
+    match status {
+        ECOG::ECOG0 => 0,
+        ECOG::ECOG1 => 1,
+        ECOG::ECOG2 => 2,
+        ECOG::ECOG3 => 3,
+        ECOG::ECOG4 => 4,
+    }
+}
+
+// =============================================================================
+// Advanced Patterns (Future: Data-carrying variants)
+// =============================================================================
+
+// These patterns will be enabled when data-carrying variants are supported:
+//
+// enum LabResult {
+//     Normal;
+//     Elevated(Float);    // with fold-change
+//     Decreased(Float);   // with fold-change
+//     Critical(Float);    // with value
+// }
+//
+// fn classify_lab(result: LabResult) -> String {
+//     match result {
+//         LabResult::Normal => "WNL",
+//         LabResult::Elevated(fc) if fc > 3.0 => "Grade 3",
+//         LabResult::Elevated(fc) if fc > 1.5 => "Grade 1-2",
+//         LabResult::Elevated(_) => "Mild elevation",
+//         LabResult::Decreased(fc) if fc < 0.5 => "Significant decrease",
+//         LabResult::Decreased(_) => "Mild decrease",
+//         LabResult::Critical(val) => "Critical: requires intervention",
+//     }
+// }
+
+export {
+    // Enums
+    Response,
+    ToxicityGrade,
+    ECOG,
+    TreatmentDecision,
+
+    // Scoring functions
+    response_score,
+    is_responder,
+    clinical_benefit,
+    orr_indicator,
+    dcr_indicator,
+
+    // Decision functions
+    dose_modification,
+    ecog_eligible,
+    treatment_decision,
+
+    // Utility functions
+    response_to_string,
+    toxicity_to_int,
+    is_dose_limiting,
+    ecog_score,
+};

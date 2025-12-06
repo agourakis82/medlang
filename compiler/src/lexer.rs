@@ -169,6 +169,16 @@ pub enum Token {
     #[token("log_likelihood")]
     LogLikelihood,
 
+    // Phase V1: Effect system, epistemic computing, refinement types
+    #[token("with")]
+    With,
+
+    #[token("Knowledge")]
+    Knowledge,
+
+    #[token("where")]
+    Where,
+
     // Unit type keywords
     #[token("Mass")]
     Mass,
@@ -250,6 +260,9 @@ pub enum Token {
 
     #[token("~")]
     Tilde,
+
+    #[token("|")]
+    Pipe,
 
     #[token("(")]
     LParen,
@@ -371,6 +384,9 @@ impl fmt::Display for Token {
             Token::Amount => write!(f, "amount"),
             Token::DataFile => write!(f, "data_file"),
             Token::LogLikelihood => write!(f, "log_likelihood"),
+            Token::With => write!(f, "with"),
+            Token::Knowledge => write!(f, "Knowledge"),
+            Token::Where => write!(f, "where"),
             Token::Mass => write!(f, "Mass"),
             Token::Volume => write!(f, "Volume"),
             Token::Time => write!(f, "Time"),
@@ -397,6 +413,7 @@ impl fmt::Display for Token {
             Token::Gte => write!(f, ">="),
             Token::Lte => write!(f, "<="),
             Token::Tilde => write!(f, "~"),
+            Token::Pipe => write!(f, "|"),
             Token::LParen => write!(f, "("),
             Token::RParen => write!(f, ")"),
             Token::LBrace => write!(f, "{{"),

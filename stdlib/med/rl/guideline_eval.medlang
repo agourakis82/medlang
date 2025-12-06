@@ -1,0 +1,43 @@
+// Week 40: Guideline-as-Policy simulation for DoseToxEnv
+//
+// Exposes helper types and functions for evaluating dose guidelines
+// (RL-derived or standard-of-care) as live dosing policies on virtual patients.
+
+module med.rl.guideline_eval;
+
+import med.rl.{RLEnvConfig, RLPolicy, PolicyEvalReport};
+import med.rl.dose_guideline::{DoseGuidelineIR};
+
+/// Basic configuration for guideline simulation
+type GuidelineEvalConfig = {
+  /// Number of virtual patients / episodes to simulate
+  n_episodes: Int;
+};
+
+/// Pairwise comparison result: RL vs one guideline
+type PolicyEvalComparison = {
+  name: String;
+  rl_eval: PolicyEvalReport;
+  guideline_eval: PolicyEvalReport;
+};
+
+export type GuidelineEvalConfig;
+export type PolicyEvalComparison;
+
+/// Simulate a single dose guideline as a policy in DoseToxEnv.
+fn simulate_dose_guideline(
+  env_cfg: RLEnvConfig;
+  guideline: DoseGuidelineIR;
+  cfg: GuidelineEvalConfig;
+) -> PolicyEvalReport;
+
+/// Compare an RL policy to one or more guidelines under the same env config.
+fn compare_policies(
+  env_cfg: RLEnvConfig;
+  rl_policy: RLPolicy;
+  guidelines: Vector<(String, DoseGuidelineIR)>;
+  cfg: GuidelineEvalConfig;
+) -> Vector<PolicyEvalComparison>;
+
+export fn simulate_dose_guideline;
+export fn compare_policies;

@@ -1,0 +1,507 @@
+/// Week 46: Clinical Constraints & Regulatory Feasibility
+///
+/// A complete clinical constraint system that:
+/// - Supports hard AND soft constraints with graduated penalties
+/// - Enables composite constraints (AND/OR logic)
+/// - Provides constraint relaxation analysis ("how far from feasible?")
+/// - Includes regulatory presets (FDA Phase I/II/III, EMA, ICH)
+/// - Handles uncertainty-aware constraints (threshold +/- margin)
+/// - Computes constraint sensitivity (impact of threshold changes)
+/// - Exports regulatory-ready documentation
+
+module med.rl.constraints;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Metric and direction enums
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Metrics available for constraints
+enum ConstraintMetric {
+  MeanResponse;
+  MeanGrade3PlusRate;
+  MeanGrade4PlusRate;
+  MeanRDI;
+  MeanReward;
+  WorstResponse;
+  WorstGrade3PlusRate;
+  WorstGrade4PlusRate;
+  WorstRDI;
+  ResponseStd;
+  ToxStd;
+  ScoreMean;
+  ScoreWorst;
+  ResponseCI95Low;
+  ResponseCI95High;
+  ToxCI95High;
+}
+
+/// Direction of constraint inequality
+enum ConstraintDirection {
+  AtLeast;   // metric >= threshold
+  AtMost;    // metric <= threshold
+  Equals;    // metric == threshold (with tolerance)
+  Between;   // threshold_low <= metric <= threshold_high
+}
+
+/// Constraint strictness level
+enum ConstraintLevel {
+  Hard;                                // Absolute requirement
+  Soft { penalty_weight: Float };      // Strong preference
+  Preference { penalty_weight: Float }; // Weak preference
+  Advisory;                            // Informational only
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Regulatory source
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Regulatory source for constraint provenance
+type RegulatorySource = enum {
+  FDA { guidance_id: String; section: Option<String> };
+  EMA { guideline_id: String; section: Option<String> };
+  ICH { code: String };
+  Institution { name: String };
+  Literature { citation: String };
+  Custom { rationale: String };
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Constraint types
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// A single atomic constraint
+type AtomicConstraint = {
+  name: String;
+  description: Option<String>;
+  metric: ConstraintMetric;
+  direction: ConstraintDirection;
+  threshold: Float;
+  threshold_high: Option<Float>;     // For Between direction
+  tolerance: Option<Float>;          // For Equals direction
+  level: ConstraintLevel;
+  source: Option<RegulatorySource>;
+  threshold_uncertainty: Option<Float>; // Uncertainty margin (+/-)
+};
+
+/// Composite constraint expression (AND/OR tree)
+type ConstraintExpr = enum {
+  Atom { constraint: AtomicConstraint };
+  And { children: Vector<ConstraintExpr> };
+  Or { children: Vector<ConstraintExpr> };
+  AtLeastN { n: Int; constraints: Vector<ConstraintExpr> };
+  Not { child: ConstraintExpr };
+  Implies { condition: ConstraintExpr; consequence: ConstraintExpr };
+};
+
+/// Named constraint set
+type ConstraintSet = {
+  name: String;
+  description: Option<String>;
+  constraints: Vector<ConstraintExpr>;
+  regulatory_context: Option<String>;
+  version: Option<String>;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Evaluation results
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Evaluation of a single atomic constraint
+type AtomicConstraintEval = {
+  constraint_name: String;
+  metric: ConstraintMetric;
+  actual_value: Float;
+  threshold: Float;
+  direction: ConstraintDirection;
+  satisfied: Bool;
+  margin: Float;            // Signed margin (positive = satisfied with room)
+  margin_normalized: Float; // Normalized margin for comparability
+  penalty: Float;           // Penalty for soft constraint violations
+  level: ConstraintLevel;
+};
+
+/// Feasibility classification for one guideline
+type GuidelineFeasibility = {
+  guideline_id: String;
+  hard_feasible: Bool;       // All hard constraints satisfied
+  fully_feasible: Bool;      // All constraints satisfied
+  total_penalty: Float;      // Total penalty from soft violations
+  n_hard_violations: Int;
+  n_soft_violations: Int;
+  violated_constraints: Vector<String>;
+};
+
+/// Sensitivity of feasibility to threshold changes
+type ConstraintSensitivity = {
+  constraint_name: String;
+  current_threshold: Float;
+  n_feasible_at_10pct_relaxation: Int;
+  n_feasible_at_20pct_relaxation: Int;
+  threshold_for_50pct_feasible: Option<Float>;
+  threshold_for_80pct_feasible: Option<Float>;
+  elasticity: Float;
+};
+
+/// Single step in relaxation path
+type RelaxationStep = {
+  constraint_name: String;
+  original_threshold: Float;
+  required_threshold: Float;
+  relaxation_amount: Float;
+  relaxation_percent: Float;
+};
+
+/// Relaxation path to feasibility
+type RelaxationPath = {
+  guideline_id: String;
+  relaxation_steps: Vector<RelaxationStep>;
+  total_relaxation_distance: Float;
+};
+
+/// Info about most binding constraints
+type BindingConstraintInfo = {
+  constraint_name: String;
+  n_violations: Int;
+  violation_rate: Float;
+  avg_violation_margin: Float;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Robustness score (Week 44 prerequisite)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Robustness score for a single guideline across scenarios
+type GuidelineRobustnessScore = {
+  guideline_id: String;
+
+  // Mean metrics
+  mean_response: Float;
+  mean_grade3plus_rate: Float;
+  mean_grade4plus_rate: Option<Float>;
+  mean_rdi: Float;
+
+  // Worst-case metrics
+  worst_response: Float;
+  worst_grade3plus_rate: Float;
+  worst_grade4plus_rate: Option<Float>;
+  worst_rdi: Float;
+
+  // Variability
+  response_std: Option<Float>;
+  tox_std: Option<Float>;
+
+  // Composite scores
+  score_mean: Float;
+  score_worst: Float;
+
+  // Confidence intervals
+  response_ci95_low: Option<Float>;
+  response_ci95_high: Option<Float>;
+  tox_ci95_high: Option<Float>;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Pareto analysis (Week 45 prerequisite)
+// ═══════════════════════════════════════════════════════════════════════════
+
+type ParetoObjective = {
+  metric: ConstraintMetric;
+  maximize: Bool;
+};
+
+type ParetoConfig = {
+  objectives: Vector<ParetoObjective>;
+  max_fronts: Int;
+};
+
+type ParetoPoint = {
+  guideline_id: String;
+  rank: Int;
+  crowding_distance: Float;
+  objective_values: Vector<Float>;
+};
+
+type ParetoAnalysis = {
+  config: ParetoConfig;
+  points: Vector<ParetoPoint>;
+  n_fronts: Int;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Configuration and results
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Configuration for constraint analysis
+type ConstraintAnalysisConfig = {
+  constraints: ConstraintSet;
+  compute_relaxation: Bool;
+  compute_sensitivity: Bool;
+  pareto_config: Option<ParetoConfig>;
+  use_uncertainty_margins: Bool;
+};
+
+/// Complete constraint analysis result
+type ConstraintAnalysis = {
+  config: ConstraintAnalysisConfig;
+  feasibility: Vector<GuidelineFeasibility>;
+  n_total: Int;
+  n_hard_feasible: Int;
+  n_fully_feasible: Int;
+  feasibility_rate: Float;
+  sensitivity: Option<Vector<ConstraintSensitivity>>;
+  relaxation_paths: Option<Vector<RelaxationPath>>;
+  pareto_all: Option<ParetoAnalysis>;
+  pareto_feasible: Option<ParetoAnalysis>;
+  most_binding_constraints: Vector<BindingConstraintInfo>;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Builtin functions
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Main constraint analysis function
+extern fn compute_constraint_analysis(
+  scores: Vector<GuidelineRobustnessScore>,
+  config: ConstraintAnalysisConfig
+) -> ConstraintAnalysis;
+
+/// Compute Pareto analysis
+extern fn compute_pareto_analysis(
+  scores: Vector<GuidelineRobustnessScore>,
+  config: ParetoConfig
+) -> ParetoAnalysis;
+
+/// Export analysis to JSON
+extern fn constraint_analysis_to_json(analysis: ConstraintAnalysis) -> String;
+
+/// Export feasibility summary to CSV
+extern fn feasibility_to_csv(analysis: ConstraintAnalysis) -> String;
+
+/// Export regulatory summary report
+extern fn to_regulatory_summary(analysis: ConstraintAnalysis) -> String;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Convenience constructors
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Create a hard "at least" constraint
+fn at_least(name: String, metric: ConstraintMetric, threshold: Float) -> ConstraintExpr {
+  ConstraintExpr::Atom {
+    constraint = {
+      name = name;
+      description = None;
+      metric = metric;
+      direction = ConstraintDirection::AtLeast;
+      threshold = threshold;
+      threshold_high = None;
+      tolerance = None;
+      level = ConstraintLevel::Hard;
+      source = None;
+      threshold_uncertainty = None;
+    }
+  }
+}
+
+/// Create a hard "at most" constraint
+fn at_most(name: String, metric: ConstraintMetric, threshold: Float) -> ConstraintExpr {
+  ConstraintExpr::Atom {
+    constraint = {
+      name = name;
+      description = None;
+      metric = metric;
+      direction = ConstraintDirection::AtMost;
+      threshold = threshold;
+      threshold_high = None;
+      tolerance = None;
+      level = ConstraintLevel::Hard;
+      source = None;
+      threshold_uncertainty = None;
+    }
+  }
+}
+
+/// Create a soft constraint with penalty
+fn soft_at_least(
+  name: String,
+  metric: ConstraintMetric,
+  threshold: Float,
+  penalty: Float
+) -> ConstraintExpr {
+  ConstraintExpr::Atom {
+    constraint = {
+      name = name;
+      description = None;
+      metric = metric;
+      direction = ConstraintDirection::AtLeast;
+      threshold = threshold;
+      threshold_high = None;
+      tolerance = None;
+      level = ConstraintLevel::Soft { penalty_weight = penalty };
+      source = None;
+      threshold_uncertainty = None;
+    }
+  }
+}
+
+/// Create a soft "at most" constraint with penalty
+fn soft_at_most(
+  name: String,
+  metric: ConstraintMetric,
+  threshold: Float,
+  penalty: Float
+) -> ConstraintExpr {
+  ConstraintExpr::Atom {
+    constraint = {
+      name = name;
+      description = None;
+      metric = metric;
+      direction = ConstraintDirection::AtMost;
+      threshold = threshold;
+      threshold_high = None;
+      tolerance = None;
+      level = ConstraintLevel::Soft { penalty_weight = penalty };
+      source = None;
+      threshold_uncertainty = None;
+    }
+  }
+}
+
+/// Combine constraints with AND logic
+fn all_of(constraints: Vector<ConstraintExpr>) -> ConstraintExpr {
+  ConstraintExpr::And { children = constraints }
+}
+
+/// Combine constraints with OR logic
+fn any_of(constraints: Vector<ConstraintExpr>) -> ConstraintExpr {
+  ConstraintExpr::Or { children = constraints }
+}
+
+/// At least N of M constraints must be satisfied
+fn at_least_n_of(n: Int, constraints: Vector<ConstraintExpr>) -> ConstraintExpr {
+  ConstraintExpr::AtLeastN { n = n; constraints = constraints }
+}
+
+/// Negate a constraint
+fn not_constraint(constraint: ConstraintExpr) -> ConstraintExpr {
+  ConstraintExpr::Not { child = constraint }
+}
+
+/// Create implication: if A then B
+fn implies(condition: ConstraintExpr, consequence: ConstraintExpr) -> ConstraintExpr {
+  ConstraintExpr::Implies { condition = condition; consequence = consequence }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Regulatory presets
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// FDA Phase I oncology constraints
+extern fn fda_phase1_oncology() -> ConstraintSet;
+
+/// FDA Phase II oncology constraints
+extern fn fda_phase2_oncology() -> ConstraintSet;
+
+/// EMA adaptive trial constraints
+extern fn ema_adaptive_oncology() -> ConstraintSet;
+
+/// ICH E9 statistical constraints
+extern fn ich_e9_constraints() -> ConstraintSet;
+
+/// Default analysis config
+fn default_constraint_config(constraints: ConstraintSet) -> ConstraintAnalysisConfig {
+  {
+    constraints = constraints;
+    compute_relaxation = true;
+    compute_sensitivity = true;
+    pareto_config = None;
+    use_uncertainty_margins = false;
+  }
+}
+
+/// Config with Pareto analysis
+fn constraint_config_with_pareto(
+  constraints: ConstraintSet,
+  pareto_cfg: ParetoConfig
+) -> ConstraintAnalysisConfig {
+  {
+    constraints = constraints;
+    compute_relaxation = true;
+    compute_sensitivity = true;
+    pareto_config = Some(pareto_cfg);
+    use_uncertainty_margins = false;
+  }
+}
+
+/// Config with uncertainty margins
+fn constraint_config_with_uncertainty(
+  constraints: ConstraintSet
+) -> ConstraintAnalysisConfig {
+  {
+    constraints = constraints;
+    compute_relaxation = true;
+    compute_sensitivity = true;
+    pareto_config = None;
+    use_uncertainty_margins = true;
+  }
+}
+
+/// Default Pareto config for efficacy vs toxicity
+fn default_pareto_config() -> ParetoConfig {
+  {
+    objectives = [
+      { metric = ConstraintMetric::MeanResponse; maximize = true },
+      { metric = ConstraintMetric::MeanGrade3PlusRate; maximize = false }
+    ];
+    max_fronts = 5;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Exports
+// ═══════════════════════════════════════════════════════════════════════════
+
+export enum ConstraintMetric;
+export enum ConstraintDirection;
+export enum ConstraintLevel;
+export type RegulatorySource;
+export type AtomicConstraint;
+export type ConstraintExpr;
+export type ConstraintSet;
+export type AtomicConstraintEval;
+export type GuidelineFeasibility;
+export type ConstraintSensitivity;
+export type RelaxationStep;
+export type RelaxationPath;
+export type BindingConstraintInfo;
+export type GuidelineRobustnessScore;
+export type ParetoObjective;
+export type ParetoConfig;
+export type ParetoPoint;
+export type ParetoAnalysis;
+export type ConstraintAnalysisConfig;
+export type ConstraintAnalysis;
+
+export fn compute_constraint_analysis;
+export fn compute_pareto_analysis;
+export fn constraint_analysis_to_json;
+export fn feasibility_to_csv;
+export fn to_regulatory_summary;
+
+export fn at_least;
+export fn at_most;
+export fn soft_at_least;
+export fn soft_at_most;
+export fn all_of;
+export fn any_of;
+export fn at_least_n_of;
+export fn not_constraint;
+export fn implies;
+
+export fn fda_phase1_oncology;
+export fn fda_phase2_oncology;
+export fn ema_adaptive_oncology;
+export fn ich_e9_constraints;
+export fn default_constraint_config;
+export fn constraint_config_with_pareto;
+export fn constraint_config_with_uncertainty;
+export fn default_pareto_config;

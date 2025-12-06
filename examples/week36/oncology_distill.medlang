@@ -1,0 +1,354 @@
+// Week 36 Example: RL Policy Distillation for Oncology Dosing
+//
+// This example demonstrates how to:
+// 1. Train an RL policy for dose optimization
+// 2. Distill the policy into an interpretable decision tree
+// 3. Compare the original policy vs the distilled tree
+// 4. Tune tree complexity for interpretability vs fidelity tradeoff
+//
+// The distilled tree can be:
+// - Visualized and understood by clinicians
+// - Converted to clinical guidelines
+// - Compared to standard-of-care protocols
+
+module examples.week36.oncology_distill;
+
+import med.rl::{
+  RLEnvConfig,
+  RLTrainConfig,
+  RLPolicy,
+  RLTrainReport,
+  PolicyEvalReport,
+  train_policy_rl,
+  simulate_policy_rl,
+};
+
+import med.rl.explain::{
+  DistillConfig,
+  DistillReport,
+  DistilledPolicy,
+  DistillResult,
+  distill_policy_tree,
+  simulate_distilled_policy,
+};
+
+import med.ml.backend::{BackendKind};
+
+// ============================================================================
+// Environment Configuration
+// ============================================================================
+
+/// Configure the RL environment for oncology dosing
+fn create_env_config() -> RLEnvConfig {
+  {
+    // Stub evidence program (in production, this would be a real QSP model)
+    evidence_program = "oncology_qsp";
+
+    // Use surrogate backend for fast simulation
+    backend = BackendKind::Surrogate;
+
+    // Treatment cycles (e.g., 6 cycles of chemotherapy)
+    n_cycles = 6;
+
+    // Available dose levels in mg
+    // 0 = no dose (dose hold), 50-300 = increasing intensity
+    dose_levels = [0.0, 50.0, 100.0, 150.0, 200.0, 250.0, 300.0];
+
+    // Reward weights
+    w_response = 1.0;      // Weight for tumor response
+    w_tox = 2.0;           // Weight for toxicity penalty
+    contract_penalty = 10.0; // Penalty for safety contract violations
+  }
+}
+
+// ============================================================================
+// Training Configuration
+// ============================================================================
+
+/// Configure RL training parameters
+fn create_train_config() -> RLTrainConfig {
+  {
+    // Train for 500 episodes (virtual patients)
+    n_episodes = 500;
+
+    // Maximum 10 steps per episode (safety limit)
+    max_steps_per_episode = 10;
+
+    // Discount factor (how much to value future rewards)
+    gamma = 0.95;
+
+    // Learning rate
+    alpha = 0.1;
+
+    // Exploration schedule (epsilon-greedy)
+    eps_start = 0.3;  // Start with 30% exploration
+    eps_end = 0.05;   // End with 5% exploration
+  }
+}
+
+// ============================================================================
+// Distillation Configuration
+// ============================================================================
+
+/// Configure distillation with high interpretability
+fn create_distill_config_simple() -> DistillConfig {
+  {
+    // Sample from 200 episodes
+    n_episodes = 200;
+
+    // Maximum steps per episode
+    max_steps_per_episode = 10;
+
+    // Shallow tree for maximum interpretability
+    max_depth = 2;
+
+    // Large minimum samples for robust splits
+    min_samples_leaf = 30;
+  }
+}
+
+/// Configure distillation for balanced fidelity/interpretability
+fn create_distill_config_balanced() -> DistillConfig {
+  {
+    n_episodes = 200;
+    max_steps_per_episode = 10;
+
+    // Medium depth - good balance
+    max_depth = 3;
+
+    // Moderate minimum samples
+    min_samples_leaf = 20;
+  }
+}
+
+/// Configure distillation for maximum fidelity
+fn create_distill_config_detailed() -> DistillConfig {
+  {
+    n_episodes = 300;
+    max_steps_per_episode = 10;
+
+    // Deeper tree - better approximation
+    max_depth = 5;
+
+    // Smaller minimum samples - more detailed splits
+    min_samples_leaf = 10;
+  }
+}
+
+// ============================================================================
+// Main Workflow: Train and Distill
+// ============================================================================
+
+/// Complete workflow: train policy, distill to tree, compare performance
+fn main() -> DistillResult {
+  let env_cfg: RLEnvConfig = create_env_config();
+
+  // Step 1: Train the RL policy
+  print("=== Training RL Policy ===");
+  let train_cfg: RLTrainConfig = create_train_config();
+  let train_result: (RLTrainReport, RLPolicy) = train_policy_rl(env_cfg, train_cfg);
+  let policy: RLPolicy = train_result.1;
+  let train_report: RLTrainReport = train_result.0;
+
+  print("Training complete!");
+  print("  Episodes: " + train_report.n_episodes);
+  print("  Average reward: " + train_report.avg_reward);
+  print("  Final epsilon: " + train_report.final_epsilon);
+
+  // Step 2: Distill policy to decision tree
+  print("\n=== Distilling Policy to Decision Tree ===");
+  let distill_cfg: DistillConfig = create_distill_config_balanced();
+  let distill_result: DistillResult = distill_policy_tree(env_cfg, policy, distill_cfg);
+  let tree: DistilledPolicy = distill_result.policy;
+  let report: DistillReport = distill_result.report;
+
+  print("Distillation complete!");
+  print("  Training samples: " + report.n_train_samples);
+  print("  Train accuracy: " + report.train_accuracy);
+  print("  Eval accuracy: " + report.eval_accuracy);
+  print("  Tree depth: " + report.tree_depth);
+  print("  Tree nodes: " + report.n_nodes);
+
+  // Step 3: Compare performance
+  print("\n=== Comparing Original vs Distilled Policy ===");
+  let eval_orig: PolicyEvalReport = simulate_policy_rl(env_cfg, policy, 500);
+  let eval_tree: PolicyEvalReport = simulate_distilled_policy(env_cfg, tree, 500);
+
+  print("Original Policy:");
+  print("  Average reward: " + eval_orig.avg_reward);
+  print("  Avg contract violations: " + eval_orig.avg_contract_violations);
+
+  print("\nDistilled Tree:");
+  print("  Average reward: " + eval_tree.avg_reward);
+  print("  Avg contract violations: " + eval_tree.avg_contract_violations);
+
+  let reward_diff: Float = eval_orig.avg_reward - eval_tree.avg_reward;
+  let pct_retained: Float = (eval_tree.avg_reward / eval_orig.avg_reward) * 100.0;
+
+  print("\nPerformance Gap:");
+  print("  Reward difference: " + reward_diff);
+  print("  Performance retained: " + pct_retained + "%");
+
+  distill_result
+}
+
+// ============================================================================
+// Complexity vs Fidelity Analysis
+// ============================================================================
+
+/// Compare different tree complexity levels
+fn analyze_complexity_tradeoff(policy: RLPolicy; env_cfg: RLEnvConfig) {
+  print("\n=== Complexity vs Fidelity Tradeoff ===");
+
+  // Simple tree (most interpretable)
+  print("\n1. Simple Tree (depth=2):");
+  let cfg_simple: DistillConfig = create_distill_config_simple();
+  let result_simple: DistillResult = distill_policy_tree(env_cfg, policy, cfg_simple);
+  print("   Eval accuracy: " + result_simple.report.eval_accuracy);
+  print("   Tree depth: " + result_simple.report.tree_depth);
+  print("   Tree nodes: " + result_simple.report.n_nodes);
+
+  // Balanced tree
+  print("\n2. Balanced Tree (depth=3):");
+  let cfg_balanced: DistillConfig = create_distill_config_balanced();
+  let result_balanced: DistillResult = distill_policy_tree(env_cfg, policy, cfg_balanced);
+  print("   Eval accuracy: " + result_balanced.report.eval_accuracy);
+  print("   Tree depth: " + result_balanced.report.tree_depth);
+  print("   Tree nodes: " + result_balanced.report.n_nodes);
+
+  // Detailed tree (highest fidelity)
+  print("\n3. Detailed Tree (depth=5):");
+  let cfg_detailed: DistillConfig = create_distill_config_detailed();
+  let result_detailed: DistillResult = distill_policy_tree(env_cfg, policy, cfg_detailed);
+  print("   Eval accuracy: " + result_detailed.report.eval_accuracy);
+  print("   Tree depth: " + result_detailed.report.tree_depth);
+  print("   Tree nodes: " + result_detailed.report.n_nodes);
+
+  print("\nRecommendation:");
+  if result_simple.report.eval_accuracy > 0.85 {
+    print("  → Use SIMPLE tree (depth=2) - excellent fidelity with maximum interpretability");
+  } else if result_balanced.report.eval_accuracy > 0.80 {
+    print("  → Use BALANCED tree (depth=3) - good fidelity with good interpretability");
+  } else {
+    print("  → Use DETAILED tree (depth=5) - best fidelity, moderate interpretability");
+  }
+}
+
+// ============================================================================
+// Per-Action Fidelity Analysis
+// ============================================================================
+
+/// Analyze which dose levels are well-approximated by the tree
+fn analyze_per_action_fidelity(policy: RLPolicy; env_cfg: RLEnvConfig) {
+  print("\n=== Per-Action Fidelity Analysis ===");
+
+  let distill_cfg: DistillConfig = create_distill_config_balanced();
+  let result: DistillResult = distill_policy_tree(env_cfg, policy, distill_cfg);
+  let report: DistillReport = result.report;
+
+  print("Fidelity by dose level:");
+
+  let dose_levels: Vector<Float> = [0.0, 50.0, 100.0, 150.0, 200.0, 250.0, 300.0];
+  let accuracies: Vector<Float> = report.per_action_accuracy;
+
+  let mut i: Int = 0;
+  while i < dose_levels.length() {
+    let dose: Float = dose_levels[i];
+    let acc: Float = accuracies[i];
+    print("  Dose " + dose + " mg: " + (acc * 100.0) + "% accuracy");
+
+    if acc < 0.7 {
+      print("    ⚠ WARNING: Low fidelity for this dose level");
+    }
+
+    i = i + 1;
+  }
+
+  print("\nInterpretation:");
+  print("  High accuracy (>80%): Tree reliably approximates policy for this dose");
+  print("  Medium accuracy (60-80%): Acceptable approximation");
+  print("  Low accuracy (<60%): Tree may deviate from policy for this dose");
+}
+
+// ============================================================================
+// Clinical Interpretation Helper
+// ============================================================================
+
+/// Generate clinical interpretation of the distilled tree
+fn interpret_tree_clinically(result: DistillResult) {
+  print("\n=== Clinical Interpretation ===");
+
+  let report: DistillReport = result.report;
+
+  print("Tree Complexity:");
+  if report.tree_depth <= 2 {
+    print("  VERY SIMPLE - Can be memorized and applied at bedside");
+  } else if report.tree_depth <= 3 {
+    print("  SIMPLE - Can be summarized in a flow chart");
+  } else if report.tree_depth <= 4 {
+    print("  MODERATE - Requires decision support tool");
+  } else {
+    print("  COMPLEX - Requires computerized decision support");
+  }
+
+  print("\nFidelity to Learned Policy:");
+  let acc: Float = report.eval_accuracy;
+  if acc >= 0.90 {
+    print("  EXCELLENT (" + (acc * 100.0) + "%) - Tree closely matches learned policy");
+  } else if acc >= 0.80 {
+    print("  GOOD (" + (acc * 100.0) + "%) - Minor deviations acceptable");
+  } else if acc >= 0.70 {
+    print("  MODERATE (" + (acc * 100.0) + "%) - Review deviations carefully");
+  } else {
+    print("  LOW (" + (acc * 100.0) + "%) - Consider deeper tree or more samples");
+  }
+
+  print("\nNext Steps:");
+  print("  1. Export tree to JSON for visualization");
+  print("  2. Convert tree to clinical guideline format");
+  print("  3. Validate with clinical experts");
+  print("  4. Compare to standard-of-care protocols");
+  print("  5. Run safety analysis (Week 35) on distilled tree");
+}
+
+// ============================================================================
+// Example Usage Scenarios
+// ============================================================================
+
+/// Scenario 1: Quick interpretable rule extraction
+fn scenario_quick_rules() {
+  let env_cfg: RLEnvConfig = create_env_config();
+  let train_cfg: RLTrainConfig = create_train_config();
+
+  // Train policy
+  let result = train_policy_rl(env_cfg, train_cfg);
+  let policy = result.1;
+
+  // Extract simple rules
+  let distill_cfg: DistillConfig = create_distill_config_simple();
+  let tree_result = distill_policy_tree(env_cfg, policy, distill_cfg);
+
+  interpret_tree_clinically(tree_result);
+}
+
+/// Scenario 2: Comprehensive analysis with complexity tuning
+fn scenario_comprehensive() {
+  let env_cfg: RLEnvConfig = create_env_config();
+  let train_cfg: RLTrainConfig = create_train_config();
+
+  // Train policy
+  let result = train_policy_rl(env_cfg, train_cfg);
+  let policy = result.1;
+
+  // Analyze tradeoffs
+  analyze_complexity_tradeoff(policy, env_cfg);
+
+  // Analyze per-action fidelity
+  analyze_per_action_fidelity(policy, env_cfg);
+
+  // Get final distilled tree
+  let distill_cfg: DistillConfig = create_distill_config_balanced();
+  let tree_result = distill_policy_tree(env_cfg, policy, distill_cfg);
+
+  interpret_tree_clinically(tree_result);
+}

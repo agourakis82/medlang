@@ -23,6 +23,7 @@ pub mod mir; // MedLang Intermediate Representation (Low-level IR)
 pub mod ml; // Week 29-30: ML/Surrogate runtime support
 pub mod ontology;
 pub mod parser;
+pub mod parser_v1; // Phase V1: Parser extensions for effects, epistemic, refinements
 pub mod policy;
 pub mod portfolio;
 pub mod qm_stub;
@@ -35,5 +36,6 @@ pub mod stanrun;
 pub mod traits; // Week 53: Trait System (Typeclasses)
 pub mod typecheck;
 pub mod typeck;
+pub mod typeck_v1; // Phase V1: Extended type checking with effects, epistemic, refinements
 pub mod types;
 pub mod units; // Week 54: Units of Measure (Dimensional Analysis)
