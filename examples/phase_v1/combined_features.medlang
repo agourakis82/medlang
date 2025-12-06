@@ -1,0 +1,217 @@
+// Example: Combined Phase V1 Features
+//
+// This example demonstrates using all three Phase V1 features together:
+// - Effect system (with Pure, Prob, IO)
+// - Epistemic types (Knowledge<T>)
+// - Refinement types (where constraints)
+//
+// Clinical scenario: Population PK analysis with uncertain measurements
+// and safety constraints.
+
+model AdvancedPKModel {
+    // === Refinement Types for Safety ===
+
+    // Population parameters with physiological constraints
+    param CL_pop : Clearance where CL_pop > 0.0_L_per_h
+    param V_pop : Volume where V_pop > 0.0_L
+    param Ka_pop : RateConst where Ka_pop > 0.0_per_h
+
+    // Inter-individual variability (must be positive)
+    param omega_CL : f64 where omega_CL > 0.0 && omega_CL < 2.0
+    param omega_V : f64 where omega_V > 0.0 && omega_V < 2.0
+
+    // === Epistemic Types for Measurement Uncertainty ===
+
+    // Patient weight: measured with high confidence (calibrated scale)
+    input WT : Knowledge<Mass>(0.95) where WT in 30.0_kg..200.0_kg
+
+    // Patient age: usually accurate from medical records
+    input AGE : Knowledge<f64>(0.99) where AGE in 18.0..85.0
+
+    // Plasma concentration: measured with assay variability
+    input C_obs : Knowledge<ConcMass>(0.80)
+
+    // Dose amount: well-controlled in clinical trials
+    input DOSE : Knowledge<Mass>(0.98) where DOSE in 10.0_mg..500.0_mg
+
+    // Creatinine clearance: estimated, lower confidence
+    input CrCL_est : Knowledge<Clearance>(0.70) where CrCL_est > 0.0_mL_per_min
+
+    // === State Variables ===
+
+    state A_gut : Mass
+    state A_central : Mass
+
+    // === Individual PK Parameters ===
+
+    // Random effects (normally distributed)
+    rand eta_CL : f64
+    rand eta_V : f64
+
+    // Individual clearance with allometric scaling and renal function
+    // Confidence propagates from WT (0.95) and CrCL_est (0.70)
+    // Final CL_ind has confidence = min(0.95, 0.70) = 0.70
+    let CL_ind = CL_pop
+        * (WT / 70.0_kg)^0.75          // Allometric scaling (conf: 0.95)
+        * (CrCL_est / 100.0_mL_per_min) // Renal function (conf: 0.70)
+        * exp(eta_CL * omega_CL)        // Inter-individual variability
+
+    // Individual volume with age effect
+    // Confidence from WT (0.95) and AGE (0.99) = min(0.95, 0.99) = 0.95
+    let V_ind = V_pop
+        * (WT / 70.0_kg)               // Body size scaling (conf: 0.95)
+        * (1.0 - 0.001 * (AGE - 40.0)) // Age effect (conf: 0.99)
+        * exp(eta_V * omega_V)          // Inter-individual variability
+
+    // Absorption rate (no covariate effects)
+    let Ka_ind = Ka_pop
+
+    // === ODE System ===
+
+    // All parameters guaranteed positive by refinements
+    // No risk of division by zero
+    dA_gut/dt = -Ka_ind * A_gut
+    dA_central/dt = Ka_ind * A_gut - (CL_ind / V_ind) * A_central
+
+    // === Observations ===
+
+    // Predicted concentration (epistemic type with propagated confidence)
+    obs C_pred : Knowledge<ConcMass> = A_central / V_ind
+
+    // === Likelihood ===
+
+    // Compare predicted vs observed (both have confidence values)
+    log_likelihood ~ Normal(C_pred, C_obs)
+}
+
+// === Effect-Annotated Analysis Functions ===
+
+// Pure: Dose calculation (deterministic, no side effects)
+fn calculate_loading_dose(
+    target_conc: f64,
+    volume: f64
+) : f64 with Pure
+where volume > 0.0  // Refinement ensures safety
+{
+    target_conc * volume
+}
+
+// Prob: Prior sampling for population parameters
+fn sample_population_priors() : PopulationParams with Prob {
+    // Sample from prior distributions
+    let CL_pop ~ LogNormal(10.0, 0.3)
+    let V_pop ~ LogNormal(50.0, 0.3)
+    let Ka_pop ~ LogNormal(1.0, 0.5)
+
+    PopulationParams { CL_pop, V_pop, Ka_pop }
+}
+
+// IO: Load clinical data from file
+fn load_clinical_data(
+    filename: string
+) : ClinicalDataset with IO {
+    // Read patient data with epistemic metadata
+    let raw_data = data_file(filename)
+
+    // Each measurement includes confidence level
+    parse_epistemic_data(raw_data)
+}
+
+// Prob | IO: Full MCMC analysis with both effects
+fn run_population_pk_analysis(
+    data_file: string,
+    model: AdvancedPKModel
+) : PosteriorResults with Prob | IO
+{
+    // Load data (IO effect)
+    let clinical_data = load_clinical_data(data_file)
+
+    // Validate data constraints (refinement checking at runtime)
+    validate_data_constraints(clinical_data)
+
+    // Run MCMC sampling (Prob effect)
+    let posterior ~ mcmc_sample(
+        model,
+        clinical_data,
+        chains = 4,
+        warmup = 1000,
+        samples = 2000,
+        seed = 12345
+    )
+
+    // Save results (IO effect)
+    save_posterior("results/posterior.json", posterior)
+
+    // Compute diagnostics (Pure - can be called from any effect)
+    let diagnostics = compute_mcmc_diagnostics(posterior)
+
+    // Save diagnostics (IO effect)
+    save_diagnostics("results/diagnostics.json", diagnostics)
+
+    PosteriorResults { posterior, diagnostics }
+}
+
+// === Clinical Validation ===
+
+// Pure function with refinement constraints
+fn validate_clearance_estimate(
+    CL: f64,
+    CrCL: f64
+) : bool with Pure
+where CL > 0.0 && CrCL > 0.0  // Both must be positive
+{
+    // Check if clearance is physiologically plausible
+    let ratio = CL / CrCL
+    ratio > 0.1 && ratio < 10.0  // Reasonable CL/CrCL ratio
+}
+
+// Epistemic validation: Check if confidence is sufficient
+fn check_measurement_quality(
+    measurement: Knowledge<f64>
+) : QualityAssessment with Pure {
+    if measurement.confidence >= 0.90 {
+        QualityAssessment::High
+    } else if measurement.confidence >= 0.75 {
+        QualityAssessment::Adequate
+    } else if measurement.confidence >= 0.60 {
+        QualityAssessment::Marginal
+    } else {
+        QualityAssessment::Insufficient
+    }
+}
+
+// === Benefits of Combined Features ===
+
+// 1. Safety (Refinements):
+//    - CL, V, Ka guaranteed positive → no division by zero
+//    - WT, AGE in physiological ranges → no unrealistic values
+//    - DOSE within therapeutic window → safety bounds
+
+// 2. Uncertainty Tracking (Epistemic):
+//    - WT has 95% confidence (well-calibrated equipment)
+//    - AGE has 99% confidence (reliable medical records)
+//    - C_obs has 80% confidence (assay variability)
+//    - CrCL_est has 70% confidence (estimation uncertainty)
+//    - Confidence propagates through calculations automatically
+
+// 3. Effect Tracking:
+//    - Pure functions: calculate_loading_dose, validate_clearance_estimate
+//      → Can be cached, parallelized, tested easily
+//    - Prob functions: sample_population_priors, run_population_pk_analysis
+//      → Non-deterministic, need seed for reproducibility
+//    - IO functions: load_clinical_data, save_posterior
+//      → Side effects, need error handling
+//    - Combined Prob|IO: run_population_pk_analysis
+//      → Tracks all computational effects explicitly
+
+// 4. Compile-Time Guarantees:
+//    - Type safety: All units checked (M·L·T dimensional analysis)
+//    - Effect safety: No Pure function can do I/O
+//    - Constraint safety: No parameter can violate physiological bounds
+//    - Confidence safety: All measurements tracked with uncertainty
+
+// 5. Clinical Impact:
+//    - Safer models: Division by zero impossible
+//    - Better uncertainty quantification: Measurement quality explicit
+//    - Reproducible workflows: Effects tracked, seeds required for Prob
+//    - Regulatory compliance: All assumptions and constraints documented in types

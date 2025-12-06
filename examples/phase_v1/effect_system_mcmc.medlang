@@ -1,0 +1,120 @@
+// Example: MCMC Sampling with Effect Annotations
+//
+// This example demonstrates using the effect system to track
+// computational side effects in pharmacometric workflows.
+
+model PKModel {
+    param CL : Clearance
+    param V : Volume
+    param Ka : RateConst
+
+    state A_gut : Mass
+    state A_central : Mass
+
+    dA_gut/dt = -Ka * A_gut
+    dA_central/dt = Ka * A_gut - (CL / V) * A_central
+
+    obs C_plasma : ConcMass = A_central / V
+}
+
+// Pure function: No side effects, deterministic
+fn calculate_dose_simple(weight: f64) : f64 with Pure {
+    // Pure computation: same inputs always produce same outputs
+    // Can be called from anywhere
+    let dose = weight * 10.0
+    dose
+}
+
+// Probabilistic function: Uses random sampling
+fn sample_prior_clearance() : f64 with Prob {
+    // Samples from a probability distribution
+    // Non-deterministic, but no I/O
+    let CL_sample ~ LogNormal(10.0, 0.3)
+    CL_sample
+}
+
+// I/O function: Reads/writes files
+fn load_patient_data(filename: string) : Data with IO {
+    // Reads from file system
+    // Has side effects, non-deterministic (file might not exist)
+    data_file(filename)
+}
+
+// Probabilistic + I/O: MCMC sampling with file output
+fn run_mcmc_analysis(data: Data, model: PKModel) : Posterior with Prob | IO {
+    // 1. Samples from posterior (Prob effect)
+    // 2. Writes results to disk (IO effect)
+    // 3. Reads intermediate checkpoints (IO effect)
+
+    // Run MCMC sampling (Prob)
+    let posterior ~ mcmc_sample(model, data, chains=4, samples=1000)
+
+    // Write results to file (IO)
+    write_results("results/posterior.json", posterior)
+
+    // Return posterior
+    posterior
+}
+
+// GPU computation: Offloaded to GPU
+fn parallel_matrix_ops(A: Matrix, B: Matrix) : Matrix with GPU {
+    // Runs on GPU for large matrices
+    // Effect tracking ensures proper resource management
+    A * B  // Executes on GPU via effect system
+}
+
+// Combined effects: GPU + IO
+fn gpu_accelerated_analysis(data: Data) : Results with GPU | IO {
+    // Load data (IO)
+    let matrix_data = load_large_dataset(data)
+
+    // Compute on GPU (GPU)
+    let result = parallel_matrix_ops(matrix_data, matrix_data)
+
+    // Save results (IO)
+    save_results("output/gpu_results.dat", result)
+
+    result
+}
+
+// Effect subsumption: Pure can call Pure
+fn safe_nested_calculation(w1: f64, w2: f64) : f64 with Pure {
+    // Can call Pure functions from Pure function
+    let d1 = calculate_dose_simple(w1)
+    let d2 = calculate_dose_simple(w2)
+    d1 + d2
+}
+
+// Effect subsumption: Prob can call Pure and Prob
+fn probabilistic_dose_calculation(weight: f64) : f64 with Prob {
+    // Can call Pure function (subsumption)
+    let base_dose = calculate_dose_simple(weight)
+
+    // Can call Prob function
+    let variability ~ Normal(0.0, 0.1)
+
+    base_dose * (1.0 + variability)
+}
+
+// Main analysis workflow with full effect tracking
+fn main_analysis() : Report with Prob | IO | GPU {
+    // Load data (IO)
+    let patient_data = load_patient_data("data/patients.csv")
+
+    // Run GPU-accelerated preprocessing (GPU | IO)
+    let preprocessed = gpu_accelerated_analysis(patient_data)
+
+    // Run MCMC (Prob | IO)
+    let posterior = run_mcmc_analysis(preprocessed, PKModel)
+
+    // Generate report (Pure - can be called from any effect)
+    generate_report(posterior)
+}
+
+// Effect system benefits:
+// 1. Explicit tracking of non-determinism (Prob)
+// 2. Explicit tracking of I/O operations
+// 3. Explicit tracking of GPU usage
+// 4. Compile-time verification of effect subsumption
+// 5. Better resource management (know when GPU is needed)
+// 6. Reproducibility tracking (know which computations are deterministic)

@@ -1,0 +1,48 @@
+// Example: Pharmacokinetic Model with Epistemic Types
+//
+// This example demonstrates using Knowledge types to represent
+// measurements with associated confidence levels. This is useful
+// for clinical data where measurement quality varies.
+
+model PKWithUncertainty {
+    // Traditional parameters (certain values)
+    param Ka : RateConst
+    param V_pop : Volume
+    param CL_pop : Clearance
+
+    // Epistemic parameters - measured values with confidence requirements
+    // Measured patient weight requires at least 95% confidence
+    input WT_measured : Knowledge<Mass>(0.95)
+
+    // Measured plasma concentration requires at least 80% confidence
+    // Lower confidence acceptable for concentration vs weight
+    input C_measured : Knowledge<ConcMass>(0.80)
+
+    // Estimated clearance from sparse sampling - lower confidence
+    param CL_estimated : Knowledge<Clearance>(0.70)
+
+    // State variables
+    state A_gut : Mass
+    state A_central : Mass
+
+    // Individual clearance using epistemic weight
+    // Confidence propagates: CL will have min(conf(CL_pop), conf(WT_measured))
+    let CL = CL_pop * (WT_measured / 70.0_kg)^0.75
+
+    // ODE system
+    dA_gut/dt = -Ka * A_gut
+    dA_central/dt = Ka * A_gut - (CL / V_pop) * A_central
+
+    // Observable with epistemic type
+    obs C_plasma : Knowledge<ConcMass> = A_central / V_pop
+
+    // Compare predicted vs measured concentration
+    // Both have confidence values that propagate through the likelihood
+    log_likelihood ~ Normal(C_plasma, C_measured)
+}
+
+// Clinical interpretation:
+// - WT_measured has 95% confidence (well-calibrated scale)
+// - C_measured has 80% confidence (HPLC assay with known variability)
+// - CL_estimated has 70% confidence (derived from sparse PK samples)
+// - Final predictions inherit the minimum confidence from inputs

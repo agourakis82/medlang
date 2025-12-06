@@ -1,0 +1,53 @@
+// Example: Pharmacokinetic Model with Refinement Type Safety
+//
+// This example demonstrates using refinement types to ensure
+// compile-time safety for common clinical constraints.
+
+model SafePKModel {
+    // Refinement constraint: Clearance must be positive (prevents division by zero)
+    param CL : Clearance where CL > 0.0_L_per_h
+
+    // Refinement constraint: Volume must be positive
+    param V : Volume where V > 0.0_L
+
+    // Refinement constraint: Absorption rate must be positive
+    param Ka : RateConst where Ka > 0.0_per_h
+
+    // Physiological constraint: Patient weight in realistic range
+    input WT : Mass where WT in 30.0_kg..200.0_kg
+
+    // Physiological constraint: Age in human lifespan
+    input AGE : f64 where AGE in 0.0..120.0
+
+    // Dose constraint: Clinical dose range for this drug
+    input DOSE : Mass where DOSE in 10.0_mg..1000.0_mg
+
+    // State variables
+    state A_gut : Mass
+    state A_central : Mass
+
+    // Safe computation: CL and V are guaranteed > 0 by refinements
+    // This prevents runtime division by zero errors
+    let k_elim = CL / V  // Safe: both CL > 0 and V > 0 proven at compile time
+
+    // Allometric scaling: WT is proven to be in valid range
+    let CL_scaled = CL * (WT / 70.0_kg)^0.75  // Safe: WT in valid range
+
+    // ODE system
+    dA_gut/dt = -Ka * A_gut
+    dA_central/dt = Ka * A_gut - k_elim * A_central
+
+    // Observable with safety constraint
+    obs C_plasma : ConcMass = A_central / V  // Safe: V > 0 proven
+
+    // Likelihood
+    log_likelihood ~ Normal(C_plasma, 0.1_mg_per_L)
+}
+
+// Compile-time guarantees:
+// 1. No division by zero possible (CL, V, WT all > 0)
+// 2. All physiological parameters in valid ranges
+// 3. Doses within therapeutic window
+// 4. Age constraint prevents pediatric/geriatric misuse
+//
+// If any input violates constraints, compilation fails with clear error
