@@ -1,0 +1,173 @@
+// =============================================================================
+// MedLang-D v0.4 Example: Saturable (Non-linear) Absorption
+// Drug: Gabapentin (BCS Class III, carrier-mediated absorption)
+// =============================================================================
+// Demonstrates Michaelis-Menten absorption kinetics with dose-dependent
+// bioavailability - a key feature for drugs with transporter-limited uptake
+
+model SaturableAbsorptionPBPK {
+    description: "Saturable absorption PBPK model for gabapentin"
+    version: "0.4.0"
+    
+    // =========================================================================
+    // DRUG PARAMETERS
+    // =========================================================================
+    drug Gabapentin {
+        mw: 171.24,              // g/mol
+        logP: -1.1,              // Hydrophilic
+        pKa: [3.68, 10.7],       // Zwitterion
+        fup: 0.97,               // Unbound fraction in plasma
+        BP: 1.0,                 // Blood:plasma ratio
+        solubility: 10.0 mg/mL  // High aqueous solubility
+    }
+    
+    // =========================================================================
+    // SATURABLE ABSORPTION DEFINITION (v0.4 feature)
+    // =========================================================================
+    // LAT1 transporter-mediated uptake follows Michaelis-Menten kinetics
+    
+    absorption saturable {
+        // Michaelis-Menten parameters
+        vmax: 500.0 mg/h,        // Maximum absorption rate
+        km: 300.0 mg,            // Concentration at half-Vmax (Michaelis constant)
+        
+        // Passive diffusion component (minor for gabapentin)
+        passive_ka: 0.05 h^-1,   // Low passive permeability
+        
+        // Fraction parameters
+        fa: 0.95,                // High fraction absorbed (if no saturation)
+        fg: 1.0,                 // No gut wall metabolism (renally cleared)
+        fh: 1.0,                 // No hepatic first-pass
+        
+        // Timing
+        lag: 0.25 h              // Gastric emptying delay
+    }
+    
+    // =========================================================================
+    // DOSE-DEPENDENT BIOAVAILABILITY
+    // =========================================================================
+    // Key feature: Bioavailability decreases with increasing dose
+    // F ≈ Vmax / (Vmax + ka * Dose) at steady state
+    
+    // Clinical data (Gabapentin label):
+    // 300 mg: F ~ 60%
+    // 600 mg: F ~ 47%
+    // 900 mg: F ~ 40%
+    // 1200 mg: F ~ 33%
+    // 1600 mg: F ~ 27%
+    
+    // =========================================================================
+    // ORGAN PHYSIOLOGY
+    // =========================================================================
+    organ Liver {
+        volume: 1.5 L,
+        blood_flow: 1.45 L/min,
+        Kp: 1.0                  // No hepatic accumulation
+    }
+    
+    organ Kidney {
+        volume: 0.31 L,
+        blood_flow: 1.1 L/min,
+        Kp: 1.2
+    }
+    
+    organ Brain {
+        volume: 1.4 L,
+        blood_flow: 0.7 L/min,
+        Kp: 0.8                  // CNS target tissue
+    }
+    
+    organ Muscle {
+        volume: 28.0 L,
+        blood_flow: 0.75 L/min,
+        Kp: 0.9
+    }
+    
+    organ Adipose {
+        volume: 14.4 L,
+        blood_flow: 0.26 L/min,
+        Kp: 0.3                  // Low adipose distribution (hydrophilic)
+    }
+    
+    // =========================================================================
+    // CLEARANCE
+    // =========================================================================
+    clearance {
+        renal: 125.0 mL/min,     // Primary elimination route (GFR-dependent)
+        hepatic: 0.0 mL/min      // Negligible hepatic metabolism
+    }
+    
+    // =========================================================================
+    // POPULATION VARIABILITY
+    // =========================================================================
+    population {
+        // IIV on saturable absorption parameters
+        iiv_vmax: 0.3,           // 30% CV on Vmax
+        iiv_km: 0.25,            // 25% CV on Km
+        
+        // Covariate effects
+        covariates: [
+            // Renal function affects elimination but not absorption
+            CrCL -> CLrenal with power(1.0),
+            
+            // Body weight may affect Vmax
+            WT -> Vmax with power(0.75)
+        ]
+    }
+    
+    // =========================================================================
+    // DOSING SCENARIOS
+    // =========================================================================
+    // Demonstrate dose-dependent kinetics
+    
+    protocol DoseEscalation {
+        // Sequential dose escalation to show saturation
+        arm Low {
+            dose: 300 mg PO q8h x 7 days
+            expected_f: 0.60      // ~60% bioavailability
+        }
+        
+        arm Medium {
+            dose: 600 mg PO q8h x 7 days
+            expected_f: 0.47      // ~47% bioavailability
+        }
+        
+        arm High {
+            dose: 1200 mg PO q8h x 7 days
+            expected_f: 0.33      // ~33% bioavailability
+        }
+    }
+    
+    // =========================================================================
+    // VALIDATION ENDPOINTS
+    // =========================================================================
+    endpoints {
+        // Primary: Dose-normalized AUC should DECREASE with dose
+        dose_normalized_auc: {
+            comparator: "decreasing with dose",
+            tolerance: 0.15
+        }
+        
+        // Tmax delay at high doses (absorption rate-limited)
+        tmax: {
+            at_low_dose: 2.0-3.0 h,
+            at_high_dose: 3.0-5.0 h,   // Delayed due to saturation
+            tolerance: 0.5 h
+        }
+        
+        // Brain exposure (efficacy predictor)
+        brain_auc: {
+            target: therapeutic_range,
+            scaling: linear_with_dose   // NOT linear due to saturation!
+        }
+    }
+}
+
+// =============================================================================
+// SIMULATION NOTES
+// =============================================================================
+// 1. At low doses (< Km): Absorption is approximately linear (first-order)
+// 2. At high doses (> Km): Absorption rate plateaus at Vmax
+// 3. Total absorption decreases because drug transits faster than uptake
+// 4. Clinical implication: TID dosing may be more effective than BID for
+//    equivalent total daily dose (reduces instantaneous gut concentration)
