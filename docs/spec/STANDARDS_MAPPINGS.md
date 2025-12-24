@@ -236,7 +236,7 @@ include FHIRHelpers version '4.0.1'
 context Patient
 
 define "Assessment Window":
-  Interval[@2024-01-01, @2024-01-01 + 84 days]
+  Interval[@2025-01-01, @2025-01-01 + 84 days]
 
 define "Tumor Volume Observations":
   [Observation: "Tumor Volume"] O

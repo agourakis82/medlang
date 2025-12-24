@@ -654,7 +654,7 @@ The reference implementation is available in the Darwin PBPK Platform:
 
 ## Changelog
 
-### v0.2 (2024-11)
+### v0.2 (2025-11)
 - Added route definition (IV, ORAL, IM, SC, INFUSION)
 - Added absorption block (ka, f, lag)
 - Added firstpass block (fg, fh)
@@ -665,7 +665,7 @@ The reference implementation is available in the Darwin PBPK Platform:
 - Extended timeline with route specification
 - Reference implementation in Darwin PBPK Platform
 
-### v0.1 (2024-08)
+### v0.1 (2025-08)
 - Initial grammar specification
 - 1-compartment oral PK with NLME
 - Basic model, population, measure, timeline, cohort constructs

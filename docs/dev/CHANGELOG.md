@@ -5,7 +5,7 @@ All notable changes to MedLang will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.0] - 2024-11-27
+## [0.2.0] - 2025-11-27
 
 ### Added
 
@@ -53,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 15-compartment ODE system with gut lumen depot
 - Validated against 572 drugs (GMFE 2.02, Cmax 24.3% within 2-fold)
 
-## [0.1.0] - 2024-08-15
+## [0.1.0] - 2025-08-15
 
 ### Added
 
@@ -78,7 +78,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - two_comp_iv.medlang: 2-compartment IV bolus
 - pbpk_2comp_simple.medlang: Simple PBPK model
 
-## [0.3.0] - 2024-11-27
+## [0.3.0] - 2025-11-27
 
 ### Added
 
@@ -115,7 +115,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - EHR model: Functional with meal-triggered GB emptying
 - 4/5 validation tests passed
 
-## [0.4.0] - 2024-11-27
+## [0.4.0] - 2025-11-27
 
 ### Added
 
@@ -165,7 +165,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - ODE state vector extended to 30+ states (organs + gut + transit + bile + depot)
 - Full backward compatibility with v0.2/v0.3 models
 
-## [1.0.0] - 2024-11-27
+## [1.0.0] - 2025-11-27
 
 ### Added
 

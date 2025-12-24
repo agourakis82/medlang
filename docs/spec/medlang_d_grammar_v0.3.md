@@ -302,7 +302,7 @@ Where k_empty(t) increases during meal times (Gaussian pulse).
 
 ## Changelog
 
-### v0.3 (2024-11)
+### v0.3 (2025-11)
 - Added transit block (n, ktr, mtt, ka, f, fg, fh, lag)
 - Added ehr block (f_bile, k_bile, f_reabs, k_reabs, t_gb)
 - Added meal events in timeline
@@ -311,14 +311,14 @@ Where k_empty(t) increases during meal times (Gaussian pulse).
 - Enterohepatic recirculation ODE system
 - Reference implementation in Darwin PBPK Platform
 
-### v0.2 (2024-11)
+### v0.2 (2025-11)
 - Added route definition (IV, ORAL, IM, SC, INFUSION)
 - Added absorption block (ka, f, lag)
 - Added firstpass block (fg, fh)
 - Added organ definition (volume, flow, kp)
 - Added clearance definition (hepatic, renal)
 
-### v0.1 (2024-08)
+### v0.1 (2025-08)
 - Initial grammar specification
 - 1-compartment oral PK with NLME
 - Basic model, population, measure, timeline, cohort constructs

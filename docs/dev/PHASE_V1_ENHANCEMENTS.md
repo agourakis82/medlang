@@ -1,7 +1,7 @@
 # Phase V1 Enhancements: Demetrios-Inspired Features
 
 **Status**: Implemented  
-**Date**: December 2024  
+**Date**: December 2025  
 **Inspired by**: [Demetrios Language](https://github.com/chiuratto-AI/demetrios)
 
 This document describes the three major enhancements added to MedLang in Phase V1, inspired by the Demetrios programming language while maintaining MedLang's medical-native focus.
@@ -121,7 +121,7 @@ input DOSE : Knowledge<DoseMass> {
     confidence = 0.95,  // 95% confident in measurement
     provenance = Measurement {
         source = "pharmacy_record",
-        timestamp = "2024-12-06T10:00:00Z",
+        timestamp = "2025-12-06T10:00:00Z",
         subject_id = "SUBJ001"
     }
 }
@@ -464,7 +464,7 @@ test refinement::clinical::tests::test_clinical_refinements ... ok
 
 - Implementation based on analysis of Demetrios language design
 - Adapted for MedLang's clinical/pharmacometric domain
-- Phase V1 completed: December 2024
+- Phase V1 completed: December 2025
 
 ---
 

@@ -1,4 +1,4 @@
-# MedLang Project Status — January 2025
+# MedLang Project Status — December 2025
 
 ## Overview
 

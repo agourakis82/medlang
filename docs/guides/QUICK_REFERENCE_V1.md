@@ -60,7 +60,7 @@ input DOSE : Knowledge<DoseMass> {
     confidence = 0.95,
     provenance = Measurement {
         source = "pharmacy_record",
-        timestamp = "2024-12-06T10:00:00Z",
+        timestamp = "2025-12-06T10:00:00Z",
         subject_id = "SUBJ001"
     }
 }

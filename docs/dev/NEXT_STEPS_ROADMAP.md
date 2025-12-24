@@ -1,7 +1,7 @@
 # MedLang Roadmap: Beyond Phase V1
 
 **Current Version**: v0.5.0 (Phase V1 Complete)  
-**Date**: December 6, 2024
+**Date**: December 6, 2025
 
 ---
 
@@ -360,8 +360,8 @@ monitor LivePatient with IO, Prob {
 
 | Phase | Timeline | Focus | Key Features |
 |-------|----------|-------|--------------|
-| ✅ V0 | Sep 2024 | Core compiler | Stan/Julia backends, NLME |
-| ✅ V1 | Dec 2024 | Demetrios features | Effects, epistemic, refinements |
+| ✅ V0 | Sep 2025 | Core compiler | Stan/Julia backends, NLME |
+| ✅ V1 | Dec 2025 | Demetrios features | Effects, epistemic, refinements |
 | V2 | Q1 2025 | Verification & perf | Z3, JIT, GPU, LSP |
 | V3 | Q2 2025 | Advanced types | Linear types, macros |
 | V4 | Q3-Q4 2025 | Distributed | Real-time monitoring |
@@ -391,7 +391,7 @@ monitor LivePatient with IO, Prob {
 
 ---
 
-## Immediate Next Actions (Week of Dec 6, 2024)
+## Immediate Next Actions (Week of Dec 6, 2025)
 
 ### This Week
 1. ✅ Release v0.5.0 - **DONE**

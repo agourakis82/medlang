@@ -392,7 +392,7 @@ mlc analyze-trial \
 **JSON structure**:
 ```json
 {
-  "trial_id": "TRIAL-2024-001",
+  "trial_id": "TRIAL-2025-001",
   "subjects": [
     {
       "id": "S001",

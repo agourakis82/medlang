@@ -1,6 +1,6 @@
 # 🎉 MedLang v0.5.0 Released!
 
-**Date**: December 6, 2024  
+**Date**: December 6, 2025  
 **Tag**: `v0.5.0`  
 **Status**: ✅ **Released and Pushed to GitHub**
 
@@ -42,7 +42,7 @@ input DOSE : Knowledge<DoseMass> {
     confidence = 0.95,  // 95% measurement confidence
     provenance = Measurement {
         source = "LC-MS/MS",
-        timestamp = "2024-12-06T10:00:00Z",
+        timestamp = "2025-12-06T10:00:00Z",
         subject_id = "SUBJ001"
     }
 }
@@ -263,7 +263,7 @@ population SafePKPop with Prob {  // Effect annotation
 
 - Implementation based on Demetrios language analysis
 - Adapted for MedLang's clinical/pharmacometric domain
-- Phase V1 completed: December 2024
+- Phase V1 completed: December 2025
 
 ---
 

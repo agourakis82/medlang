@@ -313,7 +313,7 @@ IM and SC administration involves drug release from a depot site:
 
 ## Changelog
 
-### v0.4 (2024-11)
+### v0.4 (2025-11)
 - Added saturable block (vmax, km, passive_ka)
 - Added depot block (n_depots, ka[], fractions[], f, lag)
 - Extended route support for IM and SC
@@ -322,15 +322,15 @@ IM and SC administration involves drug release from a depot site:
 - Multi-depot ODE for IM/SC with flip-flop detection
 - Reference implementation in Darwin PBPK Platform
 
-### v0.3 (2024-11)
+### v0.3 (2025-11)
 - Added transit block (n, ktr, mtt, ka)
 - Added ehr block (f_bile, k_bile, f_reabs, k_reabs, t_gb)
 - Added meal events in timeline
 
-### v0.2 (2024-11)
+### v0.2 (2025-11)
 - Added route, absorption, firstpass, organ, clearance definitions
 
-### v0.1 (2024-08)
+### v0.1 (2025-08)
 - Initial grammar specification
 
 ---

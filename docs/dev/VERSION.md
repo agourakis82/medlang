@@ -1,6 +1,6 @@
 # MedLang Version History
 
-## v0.5.0 - Phase V1: Demetrios-Inspired Enhancements (December 6, 2024)
+## v0.5.0 - Phase V1: Demetrios-Inspired Enhancements (December 6, 2025)
 
 **Major Features:**
 
@@ -38,7 +38,7 @@
 
 ---
 
-## v0.4.0 - Week 54: Units and Ontology (November 2024)
+## v0.4.0 - Week 54: Units and Ontology (November 2025)
 
 **Features:**
 - Units of measure with dimensional analysis
@@ -47,7 +47,7 @@
 
 ---
 
-## v0.3.0 - Week 52-53: Generics and Traits (November 2024)
+## v0.3.0 - Week 52-53: Generics and Traits (November 2025)
 
 **Features:**
 - Parametric polymorphism (generics)
@@ -56,7 +56,7 @@
 
 ---
 
-## v0.2.0 - Weeks 38-44: RL and Safety (October-November 2024)
+## v0.2.0 - Weeks 38-44: RL and Safety (October-November 2025)
 
 **Features:**
 - Reinforcement learning for dose optimization
@@ -65,7 +65,7 @@
 
 ---
 
-## v0.1.0 - V0 Complete: Production Compiler (September 2024)
+## v0.1.0 - V0 Complete: Production Compiler (September 2025)
 
 **Features:**
 - Complete compilation pipeline (MedLang → Stan/Julia)

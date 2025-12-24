@@ -164,7 +164,7 @@ P003,ArmB,56.0,45.0,48,1,M
 
 ```json
 {
-  "trial_id": "TRIAL-2024-001",
+  "trial_id": "TRIAL-2025-001",
   "subjects": [
     {
       "id": "P001",
