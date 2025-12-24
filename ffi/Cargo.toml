@@ -1,0 +1,28 @@
+[package]
+name = "medlang-ffi"
+version = "0.5.0"
+edition = "2021"
+description = "C FFI bindings for MedLang computational pharmacology"
+license = "MIT OR Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+name = "medlang"
+
+[dependencies]
+# Compiler crate (named "medlangc" but used as library)
+# Uncomment when compiler is stable and exposes library interface
+# medlangc = { path = "../compiler" }
+medlang-runtime = { path = "../runtime", optional = true }
+libc = "0.2"
+num_cpus = "1.16"
+parking_lot = "0.12"
+
+[features]
+default = ["runtime"]
+runtime = ["medlang-runtime"]
+gpu = []
+quantum = []
+
+[build-dependencies]
+cbindgen = "0.26"

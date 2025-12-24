@@ -1,9 +1,9 @@
 # Rust build artifacts
 compiler/target/
 **/target/
-
-# Cargo lock for libraries (keep for binaries)
-# We keep Cargo.lock for the compiler binary
+**/Cargo.lock
+# Keep Cargo.lock for binaries (compiler is a binary)
+!compiler/Cargo.lock
 
 # Editor directories and files
 .vscode/
@@ -18,20 +18,18 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 
-# Test outputs
+# Test outputs (keep golden files)
 *.csv
 *.json
 *.stan
 !tests/golden/*.stan
+!docs/examples/*.csv
+!docs/examples/*.json
 
 # Generated data
 data/
 results/
 output/
-
-# Temporary files
-tmp/
-temp/
 *.tmp
 
 # Python (if any)
@@ -42,11 +40,15 @@ __pycache__/
 venv/
 env/
 *.egg-info/
+dist/
+build/
 
 # Node (if any for Beagle)
 node_modules/
 npm-debug.log
 yarn-error.log
+package-lock.json
+yarn.lock
 
 # Compiled binaries
 mlc
@@ -55,3 +57,23 @@ generate_data
 *.dll
 *.so
 *.dylib
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.code-workspace
+
+# Temporary files
+tmp/
+temp/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,16 @@
+[package]
+name = "medlang-runtime"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "MedLang runtime layer (CPU/GPU, QM backends, fractal kernels)"
+
+[lib]
+name = "medlang_runtime"
+path = "src/lib.rs"
+
+[dependencies]
+# Runtime dependencies will be added as needed
+# For now, this is a placeholder crate
+

@@ -1,0 +1,14 @@
+# Build artifacts
+target/
+include/medlang.h
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
