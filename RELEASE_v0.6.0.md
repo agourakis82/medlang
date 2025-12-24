@@ -1,6 +1,6 @@
 # Release v0.6.0 - Repository Reorganization and FFI Crate
 
-**Release Date**: December 24, 2024
+**Release Date**: December 24, 2025
 
 ## 🎉 Major Changes
 
