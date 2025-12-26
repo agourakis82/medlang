@@ -1,6 +1,16 @@
-# MedLang
+# MedLang (Archived)
 
-**MedLang** is an embedded Domain-Specific Language (eDSL) for the [Demetrios (D) language](https://github.com/Chiuratto-AI/demetrios), designed for computational pharmacology and medical modeling.
+> ⚠️ **This repository has been archived.**
+> 
+> MedLang has been unified into the **Sounio Programming Language** as a standard library module.
+> 
+> **New home**: [sounio-lang/sounio](https://github.com/sounio-lang/sounio) → `stdlib/medlang/`
+> 
+> See [README_ARCHIVE.md](README_ARCHIVE.md) for details.
+
+---
+
+**MedLang** was an embedded Domain-Specific Language (eDSL) for the [Demetrios (D) language](https://github.com/Chiuratto-AI/demetrios), designed for computational pharmacology and medical modeling.
 
 MedLang provides a medical-native, GPU/HPC-accelerated programming interface that unifies:
 
