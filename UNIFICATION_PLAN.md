@@ -96,22 +96,31 @@ sounio/stdlib/medlang/
 - [x] Inventory MedLang standalone
 - [x] Document unification plan
 - [x] Create archive notice
+- [x] Update README with archive notice
 
-### Phase 2: Code Migration
-- [ ] Create structure in Sounio
-- [ ] Migrate `medlang_std/` models
-- [ ] Migrate `medlang_std/` protocols
-- [ ] Migrate `medlang_std/` policies
-- [ ] Convert examples to `.sio`
+### Phase 2: Code Migration ✅
+- [x] Create migration package structure
+- [x] Migrate PK models to Sounio format
+  - [x] One-compartment models
+  - [x] Two-compartment models
+- [x] Migrate dosing protocols to Sounio format
+  - [x] Weekly, Q3W, Daily protocols
+- [x] Migrate policies to Sounio format
+  - [x] FixedDose, ANCBased, TumorResponseBased, etc.
+- [x] Create migration guide
+- [ ] Convert examples to `.sio` (ready for Sounio syntax)
 
 ### Phase 3: Integration
+- [ ] Create structure in Sounio repository
+- [ ] Copy migration package to Sounio
+- [ ] Adapt syntax to actual Sounio syntax
 - [ ] Update Sounio README
 - [ ] Update Sounio CHANGELOG
 - [ ] Add MedLang to Sounio docs
-- [ ] Test compilation
+- [ ] Test compilation in Sounio
 
 ### Phase 4: Archive
-- [ ] Update MedLang README with archive notice
+- [x] Update MedLang README with archive notice
 - [ ] Archive repository on GitHub
 - [ ] Update all links
 
