@@ -1,0 +1,49 @@
+{
+  "title": "MedLang: A Medical-Native Programming Language for Computational Pharmacology",
+  "description": "MedLang is an embedded Domain-Specific Language (eDSL) for computational pharmacology and medical modeling. This repository contains the original Rust-based prototype (2024-2025) that has been unified into the Sounio Programming Language as stdlib/medlang/. MedLang provides domain-specific constructs for PK/PD modeling, population analysis, and clinical trial design, with native support for uncertainty propagation through Sounio's Knowledge<T> types.",
+  "creators": [
+    {
+      "name": "Agourakis, Demetrios Chiuratto",
+      "affiliation": "Independent Researcher"
+    }
+  ],
+  "keywords": [
+    "pharmacometrics",
+    "pharmacokinetics",
+    "pharmacodynamics",
+    "domain-specific language",
+    "computational pharmacology",
+    "PK/PD modeling",
+    "population modeling",
+    "NLME",
+    "PBPK",
+    "clinical trials",
+    "Rust",
+    "compiler",
+    "eDSL"
+  ],
+  "license": {
+    "id": "MIT OR Apache-2.0"
+  },
+  "version": "0.7.0",
+  "publication_date": "2025-12-25",
+  "related_identifiers": [
+    {
+      "relation": "isContinuedBy",
+      "identifier": "https://github.com/sounio-lang/sounio",
+      "scheme": "url"
+    },
+    {
+      "relation": "isPartOf",
+      "identifier": "https://github.com/Chiuratto-AI/demetrios",
+      "scheme": "url"
+    }
+  ],
+  "notes": "This repository has been archived. MedLang is now part of Sounio Programming Language (https://github.com/sounio-lang/sounio) as stdlib/medlang/. All active development continues in Sounio.",
+  "communities": [
+    {
+      "identifier": "computational-pharmacology"
+    }
+  ]
+}
+
