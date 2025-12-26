@@ -6,7 +6,21 @@
 > 
 > **New home**: [sounio-lang/sounio](https://github.com/sounio-lang/sounio) → `stdlib/medlang/`
 > 
+> **Final Release**: [v0.7.0-migration](RELEASE_v0.7.0_MIGRATION.md) (December 25, 2025)
+> 
 > See [README_ARCHIVE.md](README_ARCHIVE.md) for details.
+
+---
+
+## 📦 Citation & DOI
+
+This repository is archived and available on **Zenodo** for citation:
+
+**DOI**: [To be assigned after GitHub release]  
+**Version**: v0.7.0-migration  
+**Release Date**: December 25, 2025
+
+For citation format and Zenodo publication instructions, see [ZENODO_RELEASE.md](ZENODO_RELEASE.md).
 
 ---
 
